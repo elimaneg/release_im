@@ -1,0 +1,1 @@
+cd stdconf/ && ../post-release.sh  && cd -
