@@ -7,8 +7,8 @@ MASTER=master
 DEV=develop
 RELEASE=release
 HOTFIX=hotfix
-GIT=git
-MAVEN=mvn
+GIT=/opt/gitlab/embedded/bin/git
+MAVEN=/opt/apache-maven-3.2.5/bin/mvn
 GREP=grep
 
 # The most important line in each script
@@ -47,16 +47,20 @@ mvn_release() {
 
     #echo "Releasing project"
     MVN_USER_VERSION=$1
-    MVN_RELEASE_PREPARE_ARGS="-DpushChanges=false -DtagNameFormat=@{project.version}"
-    [ "${MVN_USER_VERSION}" != "" ] && MVN_RELEASE_PREPARE_ARGS="$MVN_RELEASE_PREPARE_ARGS -DreleaseVersion=${MVN_USER_VERSION} -DdevelopmentVersion=${MVN_USER_VERSION}-SNAPSHOT" 
-    MVN_RELEASE_PERFORM_ARGS="-DlocalCheckout=true -Dgoals=deploy"
+    MVN_RELEASE_PREPARE_ARGS="-DpushChanges=false -DtagNameFormat=@{project.version} -Drepo.url=http://localhost:8081/nexus"
+    [ "${MVN_USER_VERSION}" != "" ] && MVN_RELEASE_PREPARE_ARGS="$MVN_RELEASE_PREPARE_ARGS -DreleaseVersion=${MVN_USER_VERSION}"
+    # -DdevelopmentVersion=${MVN_USER_VERSION}-SNAPSHOT" 
+    MVN_RELEASE_PERFORM_ARGS="-DlocalCheckout=true -Dgoals=install -Drepo.url=http://localhost:8081/nexus"
     MVN_DEBUG_RELEASE=true
     # Phase release:prepare cree 2 commits dans le repo local : 
     # Commit 1 # Change la version du pom (enleve -SNAPSHOT) et ajoute le nom du tag dans la section scm connection du pom.xml
     # Creation d'un tag dans le repo local
     # Commit 2 # Change la version du pom vers le prochain snapshot  (ajoute snapshot version-prochaine-SNAPSHOT ) and supprime  le nom du tag dans scm connection details.
     # Phase release:perform : Build du code qui porte le tag et exectuion du goal -Dgoals=package ou (deploy par defaut = upload dans Nexus). Penser a mettre site-deploy
-    if [ "${MVN_DEBUG_RELEASE}" = "true" ] ; then 
+    if [ "${MVN_DEBUG_RELEASE}" = "true" ] ; then
+       #echo "${MAVEN} $MVN_ARGS ${MVN_RELEASE_PREPARE_ARGS} -B release:prepare"
+       #echo "${MAVEN} $MVN_ARGS ${MVN_RELEASE_PERFORM_ARGS} release:perform"
+       #exit  
        ${MAVEN} $MVN_ARGS ${MVN_RELEASE_PREPARE_ARGS} -B release:prepare
        ${MAVEN} $MVN_ARGS ${MVN_RELEASE_PERFORM_ARGS} release:perform
     else
@@ -225,11 +229,12 @@ release(){
  SCM_COMMENT_PREFIX="[release]"
  local _USER_VERSION=$1
  STABLE_VERSION=$(get_dev_version)
+ CURRENT_VERSION="${STABLE_VERSION}-SNAPSHOT"
  if [ "${_USER_VERSION}" != "" ];then
     DEV_VERSION=${STABLE_VERSION}
     STABLE_VERSION=${_USER_VERSION}
  fi
- CURRENT_VERSION="${DEV_VERSION}-SNAPSHOT"
+ #CURRENT_VERSION="${STABLE_VERSION}-SNAPSHOT"
  echo "--------------------------------------------------"
  echo " Release branch $DEV $CURRENT_VERSION to $STABLE_VERSION "
  echo "--------------------------------------------------"

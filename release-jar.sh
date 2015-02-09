@@ -7,8 +7,8 @@ MASTER=master
 DEV=develop
 RELEASE=release
 HOTFIX=hotfix
-GIT=git
-MAVEN=mvn
+GIT=/opt/gitlab/embedded/bin/git
+MAVEN=/opt/apache-maven-3.2.5/bin/mvn
 GREP=grep
 
 # The most important line in each script
@@ -45,16 +45,22 @@ remove_release_branch() {
 
 mvn_release() {
 
-    echo "Releasing project"
-    MVN_RELEASE_PREPARE_ARGS="-DpushChanges=false -DtagNameFormat=@{project.version}"
-    MVN_RELEASE_PERFORM_ARGS="-DlocalCheckout=true -Dgoals=package"
-    MVN_DEBUG_RELEASE=false
+    #echo "Releasing project"
+    MVN_USER_VERSION=$1
+    MVN_RELEASE_PREPARE_ARGS="-DpushChanges=false -DtagNameFormat=@{project.version} -Drepo.url=http://localhost:8081/nexus"
+    [ "${MVN_USER_VERSION}" != "" ] && MVN_RELEASE_PREPARE_ARGS="$MVN_RELEASE_PREPARE_ARGS -DreleaseVersion=${MVN_USER_VERSION}"
+    # -DdevelopmentVersion=${MVN_USER_VERSION}-SNAPSHOT" 
+    MVN_RELEASE_PERFORM_ARGS="-DlocalCheckout=true -Dgoals=install -Drepo.url=http://localhost:8081/nexus"
+    MVN_DEBUG_RELEASE=true
     # Phase release:prepare cree 2 commits dans le repo local : 
     # Commit 1 # Change la version du pom (enleve -SNAPSHOT) et ajoute le nom du tag dans la section scm connection du pom.xml
     # Creation d'un tag dans le repo local
     # Commit 2 # Change la version du pom vers le prochain snapshot  (ajoute snapshot version-prochaine-SNAPSHOT ) and supprime  le nom du tag dans scm connection details.
     # Phase release:perform : Build du code qui porte le tag et exectuion du goal -Dgoals=package ou (deploy par defaut = upload dans Nexus). Penser a mettre site-deploy
-    if [ "${MVN_DEBUG_RELEASE}" = "true" ] ; then 
+    if [ "${MVN_DEBUG_RELEASE}" = "true" ] ; then
+       #echo "${MAVEN} $MVN_ARGS ${MVN_RELEASE_PREPARE_ARGS} -B release:prepare"
+       #echo "${MAVEN} $MVN_ARGS ${MVN_RELEASE_PERFORM_ARGS} release:perform"
+       #exit  
        ${MAVEN} $MVN_ARGS ${MVN_RELEASE_PREPARE_ARGS} -B release:prepare
        ${MAVEN} $MVN_ARGS ${MVN_RELEASE_PERFORM_ARGS} release:perform
     else
@@ -159,6 +165,7 @@ get_dev_version(){
 
 }
 
+
 get_version(){
 
  # First get the working directory
@@ -182,11 +189,52 @@ get_version(){
 
 }
 
-release(){
+isValidVersion(){
+    local  version=$1
+    local  stat=1
+    if [[ $version =~ ^[0-9]{1,2}\.[0-9]{1,2}\.[0-9]{1,2}$ ]]; then
+        OIFS=$IFS
+        IFS='.'
+        version=($version)
+        IFS=$OIFS
+        [[ ${version[0]} -le 100 && \
+           ${version[1]} -le 100 && \
+           ${version[2]} -le 100 ]]
+        stat=$?
+    fi
+    return $stat
+}
+
+pr(){
 
  SCM_COMMENT_PREFIX="[release]"
+ STABLE_VERSION="1.0.3"
+ CURRENT_VERSION="${STABLE_VERSION}-SNAPSHOT"
+ _USER_VERSION=$1
+ if [ "${_USER_VERSION}" = "" ];then
+   STABLE_VERSION="1.0.3"
+ else
+   if isValidVersion ${_USER_VERSION}; then
+    STABLE_VERSION=${_USER_VERSION}
+   else
+    echo "The provided is invalid. It must match [Major].[Minor].[Increment]" && exit 1
+   fi
+ fi
+ echo $STABLE_VERSION
+}
+
+release(){
+
+ echo "Releasing Maven Project : ${POM_GROUPID}:${POM_ARTIFACTID}"
+ SCM_COMMENT_PREFIX="[release]"
+ local _USER_VERSION=$1
  STABLE_VERSION=$(get_dev_version)
  CURRENT_VERSION="${STABLE_VERSION}-SNAPSHOT"
+ if [ "${_USER_VERSION}" != "" ];then
+    DEV_VERSION=${STABLE_VERSION}
+    STABLE_VERSION=${_USER_VERSION}
+ fi
+ #CURRENT_VERSION="${STABLE_VERSION}-SNAPSHOT"
  echo "--------------------------------------------------"
  echo " Release branch $DEV $CURRENT_VERSION to $STABLE_VERSION "
  echo "--------------------------------------------------"
@@ -194,12 +242,22 @@ release(){
  track_remote_branch ${MASTER}
  track_remote_branch ${DEV}
  create_release_branch $STABLE_VERSION
- mvn_release
+ mvn_release $STABLE_VERSION
  merging_to_develop $STABLE_VERSION
  merging_to_master $STABLE_VERSION
  remove_release_branch $STABLE_VERSION
  checkout_branch $BRANCH_NAME
+ echo "Next step : deploy the application in TA (webapp)"
+ #touch doPostRelease
  push_changes
 }
-release
+
+USER_VERSION=$1
+
+if [ "${USER_VERSION}" != "" ];then 
+ if ! isValidVersion ${USER_VERSION}; then
+   echo "The version string you specified is invalid. It must match max 2 digit [Major].[Minor].[Increment] " && exit 1
+ fi
+fi
+release ${USER_VERSION}
 

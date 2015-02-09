@@ -1,1 +1,0 @@
-rm -rf stdconf && git clone https://gitlab.loto-quebec.com/GUEYEEL/stdconf.git && cd stdconf && ../release-application.sh && cd ..
