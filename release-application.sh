@@ -9,6 +9,8 @@ RELEASE=release
 HOTFIX=hotfix
 GIT=/opt/gitlab/embedded/bin/git
 MAVEN=/opt/apache-maven-3.2.5/bin/mvn
+# LQ
+MAVEN=/data/apps/maven/bin/mvn
 GREP=grep
 
 # The most important line in each script
@@ -47,10 +49,10 @@ mvn_release() {
 
     #echo "Releasing project"
     MVN_USER_VERSION=$1
-    MVN_RELEASE_PREPARE_ARGS="-DpushChanges=false -DtagNameFormat=@{project.version} -Drepo.url=http://localhost:8081/nexus"
+    MVN_RELEASE_PREPARE_ARGS="-DpushChanges=false -DtagNameFormat=@{project.version} "
     [ "${MVN_USER_VERSION}" != "" ] && MVN_RELEASE_PREPARE_ARGS="$MVN_RELEASE_PREPARE_ARGS -DreleaseVersion=${MVN_USER_VERSION}"
     # -DdevelopmentVersion=${MVN_USER_VERSION}-SNAPSHOT" 
-    MVN_RELEASE_PERFORM_ARGS="-DlocalCheckout=true -Dgoals=install -Drepo.url=http://localhost:8081/nexus"
+    MVN_RELEASE_PERFORM_ARGS="-DlocalCheckout=true -Dgoals=deploy"
     MVN_DEBUG_RELEASE=true
     # Phase release:prepare cree 2 commits dans le repo local : 
     # Commit 1 # Change la version du pom (enleve -SNAPSHOT) et ajoute le nom du tag dans la section scm connection du pom.xml
