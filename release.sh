@@ -22,6 +22,7 @@ MAVEN=/opt/apache-maven-3.2.5/bin/mvn
 # LQ
 MAVEN=/data/apps/maven/bin/mvn
 GREP=grep
+MVN_DEBUG_RELEASE=true
 
 # The most important line in each script
 set -e
@@ -55,15 +56,31 @@ remove_release_branch() {
     remove_branch=$(${GIT} branch -D ${RELEASE_BRANCH} 2>&1)
 }
 
+mvn_stage() {
+
+    MVN_USER_VERSION=$1
+    MVN_RELEASE_STAGING_REPOSITORY=$2
+    MVN_RELEASE_STAGE_ARGS="-DpushChanges=false -DtagNameFormat=@{project.version} -DstagingRepository="${MVN_RELEASE_STAGING_REPOSITORY}""
+    [ "${MVN_USER_VERSION}" != "" ] && MVN_RELEASE_STAGE_ARGS="$MVN_RELEASE_PREPARE_ARGS -DreleaseVersion=${MVN_USER_VERSION}"
+    MVN_RELEASE_PERFORM_ARGS="-DlocalCheckout=true -Dgoals=deploy"
+    if [ "${MVN_DEBUG_RELEASE}" = "true" ] ; then
+       ${MAVEN} $MVN_ARGS ${MVN_RELEASE_STAGE_ARGS} -B release:stage && \
+       ${MAVEN} $MVN_ARGS ${MVN_RELEASE_PERFORM_ARGS} release:perform
+    else
+       echo -n "Staging release with maven-release-plugin... "
+       mvn_release_staging=$(${MAVEN} ${MVN_ARGS} ${MVN_RELEASE_PREPARE_ARGS} -B release:stage && \
+       ${MAVEN} ${MVN_ARGS} ${MVN_RELEASE_PERFORM_ARGS} release:perform)
+       echo "Maven release done"
+    fi
+}
+
+
 mvn_release() {
 
-    #echo "Releasing project"
     MVN_USER_VERSION=$1
     MVN_RELEASE_PREPARE_ARGS="-DpushChanges=false -DtagNameFormat=@{project.version} "
     [ "${MVN_USER_VERSION}" != "" ] && MVN_RELEASE_PREPARE_ARGS="$MVN_RELEASE_PREPARE_ARGS -DreleaseVersion=${MVN_USER_VERSION}"
-    # -DdevelopmentVersion=${MVN_USER_VERSION}-SNAPSHOT" 
     MVN_RELEASE_PERFORM_ARGS="-DlocalCheckout=true -Dgoals=deploy"
-    MVN_DEBUG_RELEASE=true
     # Phase release:prepare cree 2 commits dans le repo local : 
     # Commit 1 # Change la version du pom (enleve -SNAPSHOT) et ajoute le nom du tag dans la section scm connection du pom.xml
     # Creation d'un tag dans le repo local
@@ -73,13 +90,12 @@ mvn_release() {
        #echo "${MAVEN} $MVN_ARGS ${MVN_RELEASE_PREPARE_ARGS} -B release:prepare"
        #echo "${MAVEN} $MVN_ARGS ${MVN_RELEASE_PERFORM_ARGS} release:perform"
        #exit  
-       ${MAVEN} $MVN_ARGS ${MVN_RELEASE_PREPARE_ARGS} -B release:prepare
+       ${MAVEN} $MVN_ARGS ${MVN_RELEASE_PREPARE_ARGS} -B release:prepare && \
        ${MAVEN} $MVN_ARGS ${MVN_RELEASE_PERFORM_ARGS} release:perform
     else
        echo -n "Using maven-release-plugin... "
-       mvn_release_prepare=$(${MAVEN} ${MVN_ARGS} ${MVN_RELEASE_PREPARE_ARGS} -B release:prepare)
-       echo -n "'mvn -B release:prepare' "
-       mvn_release_perform=$(${MAVEN} ${MVN_ARGS} ${MVN_RELEASE_PERFORM_ARGS} release:perform)
+       mvn_release_prepare=$(${MAVEN} ${MVN_ARGS} ${MVN_RELEASE_PREPARE_ARGS} -B release:prepare && \ 
+       ${MAVEN} ${MVN_ARGS} ${MVN_RELEASE_PERFORM_ARGS} release:perform)
        echo "'mvn release:perform'"
     fi
 }
@@ -306,14 +322,69 @@ release_webapp(){
  
 }
 
-# jar|webapp
-_RELEASE_TYPE=$1
-_RELEASE_VERSION=$1
+while getopts ":a:" opt; do
+  case $opt in
+    t)
+      _RELEASE_ARTIFACT=$OPTARG # 1: jar|webapp
+      ;;
+    a)
+      _RELEASE_TYPE=$OPTARG # stage|post
+      ;;
+    v)
+      _RELEASE_TYPE=$OPTARG # version
+      ;;
+    r)
+      _RELEASE_REPO=$OPTARG # repo of the release
+      ;;
+    \?)
+      echo "Invalid option: -$OPTARG" >&2
+      exit 1
+      ;;
+    :)
+      echo "Option -$OPTARG requires an argument." >&2
+      exit 1
+      ;;
+  esac
+done
 
-if [ "${_RELEASE_VERSION}" != "" ];then 
+# valide les options de la ldc
+if [ "${_RELEASE_VERSION}" != "" ];then
  if ! isValidVersion ${_RELEASE_VERSION}; then
    echo "The version string you specified is invalid. It must match max 2 digit [Major].[Minor].[Increment] " && exit 1
  fi
 fi
-release ${_RELEASE_VERSION}
 
+if [ "${_RELEASE_ARTIFACT}" != "jar" -a "${_RELEASE_ARTIFACT}" != "webapp" ];then
+   echo "The type of artifact is limited to a jar library or a webapp " && exit 1
+fi
+
+if [ "${_RELEASE_TYPE}" != "stage" -a "${_RELEASE_ARTIFACT}" != "post" ];then
+   echo "The action to execute on the release is limited to \"stage\" and \"post\" " && exit 1
+fi
+
+if [ "${_RELEASE_REPO}" = "" ];then
+   echo "The -r option must string you specified is invalid. It must match max 2 digit [Major].[Minor].[Increment] " && exit 1
+fi
+
+# release d'un jar
+if [ "${_RELEASE_ARTIFACT}" != "jar" -a "${_RELEASE_ARTIFACT}" != "webapp" ];then
+ release_jar ${_RELEASE_VERSION}
+else
+ release_webapp ${_RELEASE_VERSION}
+fi
+
+
+
+# bk
+#USER_VERSION=$2
+#USER_REPOSITORY=$1
+#[ $# -lt 1 ] && echo "$0 GIT_REPOSITORY [RELEASE_VERSION]" && exit 1
+#USER_WORKSPACE=${WORKSPACE}
+#[ "${USER_WORKSPACE}" = "" ] && USER_WORKSPACE=$(mktemp -d)
+# wipe workspace
+
+#find . -name . -o -prune -exec rm -fr -- {} + && \
+#${GIT} clone ${USER_REPOSITORY} "${USER_WORKSPACE}"
+
+
+# [ -d ${WORKSPACE} ] && echo "echo dont forget to delete "${USER_WORKSPACE}" if out of Jenkins"
