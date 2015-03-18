@@ -1,6 +1,16 @@
 #!/bin/bash
 
 #[ "$DO_RELEASE" != "true" ] && exit 0
+# args
+# 1: jar|webapp
+# 2: stage|post
+# 3: version
+
+# jar : one shot
+# webapp :
+#       1. mvn release:stage => les artefacts sont deployes dans le repo PreRelease
+#       2. Deploiement des artefacts depuis PreRelease vers TA + tests. si KO : supprimer tag/branche (releease/version) et peut etre artefact dans PreRelease (sinon ecrase par la prochaine tentative de release)
+#       3. Mise a jour des branches master et develop + deplacement des artefact de Prerelease vers Release
 
 SELF=$(basename $0)
 MASTER=master
@@ -52,7 +62,7 @@ mvn_release() {
     MVN_RELEASE_PREPARE_ARGS="-DpushChanges=false -DtagNameFormat=@{project.version} "
     [ "${MVN_USER_VERSION}" != "" ] && MVN_RELEASE_PREPARE_ARGS="$MVN_RELEASE_PREPARE_ARGS -DreleaseVersion=${MVN_USER_VERSION}"
     # -DdevelopmentVersion=${MVN_USER_VERSION}-SNAPSHOT" 
-    MVN_RELEASE_PERFORM_ARGS="-DlocalCheckout=true -Dgoals=deploy "
+    MVN_RELEASE_PERFORM_ARGS="-DlocalCheckout=true -Dgoals=deploy"
     MVN_DEBUG_RELEASE=true
     # Phase release:prepare cree 2 commits dans le repo local : 
     # Commit 1 # Change la version du pom (enleve -SNAPSHOT) et ajoute le nom du tag dans la section scm connection du pom.xml
@@ -233,9 +243,77 @@ postrelease(){
   exit 1
  else
   echo "Updating master/develop branches"
-  #push_changes
+  #push_changesa
+  echo "Next step is to move artefact from Pre-release to Release"
  fi
 }
 
-postrelease 
+release_jar(){
+
+ echo "Releasing Maven Project : ${POM_GROUPID}:${POM_ARTIFACTID}"
+ SCM_COMMENT_PREFIX="[release]"
+ local _USER_VERSION=$1
+ STABLE_VERSION=$(get_dev_version)
+ CURRENT_VERSION="${STABLE_VERSION}-SNAPSHOT"
+ if [ "${_USER_VERSION}" != "" ];then
+    DEV_VERSION=${STABLE_VERSION}
+    STABLE_VERSION=${_USER_VERSION}
+ fi
+ #CURRENT_VERSION="${STABLE_VERSION}-SNAPSHOT"
+ echo "--------------------------------------------------"
+ echo " Release branch $DEV $CURRENT_VERSION to $STABLE_VERSION "
+ echo "--------------------------------------------------"
+ #assert_tag_version_exist $STABLE_VERSION
+ track_remote_branch ${MASTER}
+ track_remote_branch ${DEV}
+ create_release_branch $STABLE_VERSION
+ mvn_release $STABLE_VERSION
+ merging_to_develop $STABLE_VERSION
+ merging_to_master $STABLE_VERSION
+ remove_release_branch $STABLE_VERSION
+ checkout_branch $BRANCH_NAME
+ echo "Next step : deploy the application in TA (webapp)"
+ #touch doPostRelease
+ push_changes
+}
+ 
+release_webapp(){
+
+ echo "Releasing Maven Project : ${POM_GROUPID}:${POM_ARTIFACTID}"
+ SCM_COMMENT_PREFIX="[release]"
+ local _USER_VERSION=$1
+ STABLE_VERSION=$(get_dev_version)
+ CURRENT_VERSION="${STABLE_VERSION}-SNAPSHOT"
+ if [ "${_USER_VERSION}" != "" ];then
+    DEV_VERSION=${STABLE_VERSION}
+    STABLE_VERSION=${_USER_VERSION}
+ fi
+ #CURRENT_VERSION="${STABLE_VERSION}-SNAPSHOT"
+ echo "--------------------------------------------------"
+ echo " Release branch $DEV $CURRENT_VERSION to $STABLE_VERSION "
+ echo "--------------------------------------------------"
+ #assert_tag_version_exist $STABLE_VERSION
+ track_remote_branch ${MASTER}
+ track_remote_branch ${DEV}
+ create_release_branch $STABLE_VERSION
+ mvn_release $STABLE_VERSION
+ merging_to_develop $STABLE_VERSION
+ merging_to_master $STABLE_VERSION
+ remove_release_branch $STABLE_VERSION
+ checkout_branch $BRANCH_NAME
+ echo "Next step : deploy the application in TA (webapp) from Pre-release Nexus repo"
+ touch doPostRelease
+ 
+}
+
+# jar|webapp
+_RELEASE_TYPE=$1
+_RELEASE_VERSION=$1
+
+if [ "${_RELEASE_VERSION}" != "" ];then 
+ if ! isValidVersion ${_RELEASE_VERSION}; then
+   echo "The version string you specified is invalid. It must match max 2 digit [Major].[Minor].[Increment] " && exit 1
+ fi
+fi
+release ${_RELEASE_VERSION}
 
