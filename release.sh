@@ -58,20 +58,18 @@ remove_release_branch() {
 
 mvn_stage() {
 
-    MVN_USER_VERSION=$1
-    MVN_RELEASE_STAGING_REPOSITORY=$2
+    MVN_USER_VERSION=$2
+    MVN_RELEASE_STAGING_REPOSITORY=$1
     MVN_RELEASE_STAGE_ARGS="-DpushChanges=false -DtagNameFormat=@{project.version} -DstagingRepository="${MVN_RELEASE_STAGING_REPOSITORY}""
     [ "${MVN_USER_VERSION}" != "" ] && MVN_RELEASE_STAGE_ARGS="$MVN_RELEASE_PREPARE_ARGS -DreleaseVersion=${MVN_USER_VERSION}"
     MVN_RELEASE_PERFORM_ARGS="-DlocalCheckout=true -Dgoals=deploy"
-    if [ "${MVN_DEBUG_RELEASE}" = "true" ] ; then
-       ${MAVEN} $MVN_ARGS ${MVN_RELEASE_STAGE_ARGS} -B release:stage && \
-       ${MAVEN} $MVN_ARGS ${MVN_RELEASE_PERFORM_ARGS} release:perform
-    else
-       echo -n "Staging release with maven-release-plugin... "
-       mvn_release_staging=$(${MAVEN} ${MVN_ARGS} ${MVN_RELEASE_PREPARE_ARGS} -B release:stage && \
-       ${MAVEN} ${MVN_ARGS} ${MVN_RELEASE_PERFORM_ARGS} release:perform)
-       echo "Maven release done"
-    fi
+    ${MAVEN} $MVN_ARGS ${MVN_RELEASE_STAGE_ARGS} -B release:stage && \
+    ${MAVEN} $MVN_ARGS ${MVN_RELEASE_PERFORM_ARGS} release:perform
+    #echo -n "Staging release with maven-release-plugin... "
+    #mvn_release_staging=$(${MAVEN} ${MVN_ARGS} ${MVN_RELEASE_PREPARE_ARGS} -B release:stage && \
+    #${MAVEN} ${MVN_ARGS} ${MVN_RELEASE_PERFORM_ARGS} release:perform)
+    #echo "Maven stage-release done"
+    #fi
 }
 
 
@@ -86,18 +84,15 @@ mvn_release() {
     # Creation d'un tag dans le repo local
     # Commit 2 # Change la version du pom vers le prochain snapshot  (ajoute snapshot version-prochaine-SNAPSHOT ) and supprime  le nom du tag dans scm connection details.
     # Phase release:perform : Build du code qui porte le tag et exectuion du goal -Dgoals=package ou (deploy par defaut = upload dans Nexus). Penser a mettre site-deploy
-    if [ "${MVN_DEBUG_RELEASE}" = "true" ] ; then
-       #echo "${MAVEN} $MVN_ARGS ${MVN_RELEASE_PREPARE_ARGS} -B release:prepare"
-       #echo "${MAVEN} $MVN_ARGS ${MVN_RELEASE_PERFORM_ARGS} release:perform"
-       #exit  
+    #if [ "${MVN_DEBUG_RELEASE}" = "true" ] ; then
        ${MAVEN} $MVN_ARGS ${MVN_RELEASE_PREPARE_ARGS} -B release:prepare && \
        ${MAVEN} $MVN_ARGS ${MVN_RELEASE_PERFORM_ARGS} release:perform
-    else
-       echo -n "Using maven-release-plugin... "
-       mvn_release_prepare=$(${MAVEN} ${MVN_ARGS} ${MVN_RELEASE_PREPARE_ARGS} -B release:prepare && \ 
-       ${MAVEN} ${MVN_ARGS} ${MVN_RELEASE_PERFORM_ARGS} release:perform)
-       echo "'mvn release:perform'"
-    fi
+    #else
+    #   echo -n "Using maven-release-plugin... "
+    #   mvn_release_prepare=$(${MAVEN} ${MVN_ARGS} ${MVN_RELEASE_PREPARE_ARGS} -B release:prepare && \ 
+    #   ${MAVEN} ${MVN_ARGS} ${MVN_RELEASE_PERFORM_ARGS} release:perform)
+    #   echo "'mvn release:perform'"
+    #fi
 }
 
 # Merging the content of release branch to develop
@@ -233,42 +228,34 @@ isValidVersion(){
     return $stat
 }
 
-pr(){
-
- SCM_COMMENT_PREFIX="[release]"
- STABLE_VERSION="1.0.3"
- CURRENT_VERSION="${STABLE_VERSION}-SNAPSHOT"
- _USER_VERSION=$1
- if [ "${_USER_VERSION}" = "" ];then
-   STABLE_VERSION="1.0.3"
- else
-   if isValidVersion ${_USER_VERSION}; then
-    STABLE_VERSION=${_USER_VERSION}
-   else
-    echo "The provided is invalid. It must match [Major].[Minor].[Increment]" && exit 1
-   fi
- fi
- echo $STABLE_VERSION
+isValidGitRepo(){
+    local  repo=$1
+    local  stat=1
+    ${GIT}  ls-remote $repo |grep HEAD
+    stat=$?
+    return $stat
 }
 
-postrelease(){
+post_release(){
 
- echo "Post-releasing Maven Project : ${POM_GROUPID}:${POM_ARTIFACTID}"
+ echo "Execution de la Post-implantation du projet : ${POM_GROUPID}:${POM_ARTIFACTID}"
  if [ ! doPostRelease ] ;then
-  echo "Source is not up to date with previous relaese build"
+  echo "Le code source differe de celui sur lequel la phase de pre-release a été effectuées. Recommencez le release"
   exit 1
  else
-  echo "Updating master/develop branches"
+  echo "Mise a jour des branches master et develop sur le serveur git"
   #push_changesa
-  echo "Next step is to move artefact from Pre-release to Release"
+  echo "Deplacement de artefacts de Pre-release vers Release"
  fi
 }
 
-release_jar(){
-
- echo "Releasing Maven Project : ${POM_GROUPID}:${POM_ARTIFACTID}"
+release(){
+ #webapp stage ${_RELEASE_VERSION}
+ echo "Execution de la realisation Maven Project : ${POM_GROUPID}:${POM_ARTIFACTID}"
  SCM_COMMENT_PREFIX="[release]"
- local _USER_VERSION=$1
+ local _ATYPE=$1 # jar
+ local _RTYPE=$2 # stage or post
+ local _USER_VERSION=$3
  STABLE_VERSION=$(get_dev_version)
  CURRENT_VERSION="${STABLE_VERSION}-SNAPSHOT"
  if [ "${_USER_VERSION}" != "" ];then
@@ -283,108 +270,103 @@ release_jar(){
  track_remote_branch ${MASTER}
  track_remote_branch ${DEV}
  create_release_branch $STABLE_VERSION
- mvn_release $STABLE_VERSION
- merging_to_develop $STABLE_VERSION
- merging_to_master $STABLE_VERSION
- remove_release_branch $STABLE_VERSION
- checkout_branch $BRANCH_NAME
- echo "Next step : deploy the application in TA (webapp)"
- #touch doPostRelease
- push_changes
-}
- 
-release_webapp(){
-
- echo "Releasing Maven Project : ${POM_GROUPID}:${POM_ARTIFACTID}"
- SCM_COMMENT_PREFIX="[release]"
- local _USER_VERSION=$1
- STABLE_VERSION=$(get_dev_version)
- CURRENT_VERSION="${STABLE_VERSION}-SNAPSHOT"
- if [ "${_USER_VERSION}" != "" ];then
-    DEV_VERSION=${STABLE_VERSION}
-    STABLE_VERSION=${_USER_VERSION}
+ if [ "${_RTYPE}" = "stage" ]; then 
+   mvn_stage ${_STAGING_REPO} $STABLE_VERSION
+ else
+   mvn_release $STABLE_VERSION 
  fi
- #CURRENT_VERSION="${STABLE_VERSION}-SNAPSHOT"
- echo "--------------------------------------------------"
- echo " Release branch $DEV $CURRENT_VERSION to $STABLE_VERSION "
- echo "--------------------------------------------------"
- #assert_tag_version_exist $STABLE_VERSION
- track_remote_branch ${MASTER}
- track_remote_branch ${DEV}
- create_release_branch $STABLE_VERSION
- mvn_release $STABLE_VERSION
  merging_to_develop $STABLE_VERSION
  merging_to_master $STABLE_VERSION
  remove_release_branch $STABLE_VERSION
  checkout_branch $BRANCH_NAME
- echo "Next step : deploy the application in TA (webapp) from Pre-release Nexus repo"
- touch doPostRelease
- 
+ if [ "${_ATYPE}" = "jar" ]; then
+  # jar
+  push_changes
+ else
+  # webapp
+  echo "Prochaine etape : deployer l'application en TA (webapp) a partir du repository Nexus Pre-release"
+  touch doPostRelease
+ fi
 }
 
-while getopts ":a:" opt; do
+# defaults
+_STAGING_REPO=PreRelease
+
+while getopts ":a:t:r:v:" opt; do
   case $opt in
     t)
       _RELEASE_ARTIFACT=$OPTARG # 1: jar|webapp
+      [ "${_RELEASE_ARTIFACT}" != "jar" -a "${_RELEASE_ARTIFACT}" != "webapp" ] && \
+      echo "Option -t (type d'artefact), Valeurs possibles : jar|webapp " && exit 1
       ;;
     a)
       _RELEASE_TYPE=$OPTARG # stage|post
+      if [ "${_RELEASE_TYPE}" != "stage" -a "${_RELEASE_TYPE}" != "post" ] ; then
+      echo -n -e "Option -a (requise quand le projet est de type webapp) , valeurs possibles : stage|post \n - stage : deployer les artefacts dans PreReleases pour test en TA \
+      \n - post : mettre a jour les branches master et develop et deplacer les artefacts de PreReleases vers Releases\n" && exit 1
+      fi
       ;;
     v)
-      _RELEASE_TYPE=$OPTARG # version
+      _RELEASE_VERSION=$OPTARG # version
+      if [ "${_RELEASE_VERSION}" != "" ];then
+        if ! isValidVersion ${_RELEASE_VERSION}; then
+          echo "La version specifiée est invalide. Elle doit respecter le patron : [Major].[Minor].[Increment] " && exit 1
+        fi
+      fi
+      ;;
+    d)
+      _RELEASE_GIT_REPOS=$OPTARG # depot git
+      if [ "${_RELEASE_GIT_REPOS}" != "" ];then
+        if ! isValidGitRepo ${_RELEASE_GIT_REPOS}; then
+          echo "Le depot git est inaccessible. verifier la saisie : git@gitlab.loto-quebec.com:GROUPE/PROJET.git " && exit 1
+        fi
+      fi
       ;;
     r)
-      _RELEASE_REPO=$OPTARG # repo of the release
+      _STAGING_REPO=$OPTARG # repo of the release
       ;;
     \?)
-      echo "Invalid option: -$OPTARG" >&2
+      echo "Option invalide: -$OPTARG" >&2
       exit 1
       ;;
     :)
-      echo "Option -$OPTARG requires an argument." >&2
+      echo "L'option -$OPTARG requiert un argument." >&2
       exit 1
       ;;
   esac
 done
 
-# valide les options de la ldc
-if [ "${_RELEASE_VERSION}" != "" ];then
- if ! isValidVersion ${_RELEASE_VERSION}; then
-   echo "The version string you specified is invalid. It must match max 2 digit [Major].[Minor].[Increment] " && exit 1
- fi
-fi
-
-if [ "${_RELEASE_ARTIFACT}" != "jar" -a "${_RELEASE_ARTIFACT}" != "webapp" ];then
-   echo "The type of artifact is limited to a jar library or a webapp " && exit 1
-fi
-
-if [ "${_RELEASE_TYPE}" != "stage" -a "${_RELEASE_ARTIFACT}" != "post" ];then
-   echo "The action to execute on the release is limited to \"stage\" and \"post\" " && exit 1
-fi
-
-if [ "${_RELEASE_REPO}" = "" ];then
-   echo "The -r option must string you specified is invalid. It must match max 2 digit [Major].[Minor].[Increment] " && exit 1
-fi
-
-# release d'un jar
-if [ "${_RELEASE_ARTIFACT}" != "jar" -a "${_RELEASE_ARTIFACT}" != "webapp" ];then
- release_jar ${_RELEASE_VERSION}
+if [ "${_RELEASE_ARTIFACT}" = "" ] ;then 
+ echo "L'option -t est obligatoire" && exit 1
 else
- release_webapp ${_RELEASE_VERSION}
+ case ${_RELEASE_ARTIFACT} in
+    # release jar (one shot = les autres options sont inutiles)
+    jar) echo "release jar ${_RELEASE_VERSION}"
+         ;;
+    webapp)
+         if [ "${_RELEASE_TYPE}" = "" ] ; then 
+           echo "L'option -a devient obligatoire quand l'option -t est presente" && $0 -t webapp -a xxx && exit 1
+         else
+	   case ${_RELEASE_TYPE} in
+	     post) echo post_release ;;
+	     stage) echo "release webapp stage ${_STAGING_REPO} ${_RELEASE_VERSION}";;
+           esac
+         fi
+	;;
+ esac
 fi
 
+function clone_repo(){
+ local _GIT_REPO=$1
+ local _WS=${WORKSPACE}
+ if [ "${_WS}" = "" ] then 
+  _WS=$(mktemp -d)
+  _WIPE_IT_LATER=${_WS}
+ else
+  find ${_WS} -name . -o -prune -exec rm -fr -- {} + 
+ fi
+ ${GIT} clone ${_GIT_REPO} "${_WS}"
+}
 
 
-# bk
-#USER_VERSION=$2
-#USER_REPOSITORY=$1
-#[ $# -lt 1 ] && echo "$0 GIT_REPOSITORY [RELEASE_VERSION]" && exit 1
-#USER_WORKSPACE=${WORKSPACE}
-#[ "${USER_WORKSPACE}" = "" ] && USER_WORKSPACE=$(mktemp -d)
-# wipe workspace
-
-#find . -name . -o -prune -exec rm -fr -- {} + && \
-#${GIT} clone ${USER_REPOSITORY} "${USER_WORKSPACE}"
-
-
-# [ -d ${WORKSPACE} ] && echo "echo dont forget to delete "${USER_WORKSPACE}" if out of Jenkins"
+ [ -d ${_WIPE_IT_LATER} ] && echo "echo dont forget to delete "${_WIPE_IT_LATER}" if out of Jenkins"
