@@ -156,7 +156,6 @@ assert_tag_version_exist(){
       echo "[###] Released ${_RELEASE} [FAILED]"
       exit 1
     fi
-    echo iiiii
     ${GIT} ls-remote --exit-code . "tags/${_RELEASE}" &> /dev/null
     if [ $? -eq 0 ]; then
       echo "fatal - A remote tag already exist tags/${_RELEASE}."
@@ -172,7 +171,9 @@ get_dev_version(){
     WORKING_DIR=$(${GIT} rev-parse --show-toplevel)
     cd $WORKING_DIR
     checkout_branch ${DEV}
-    CURRENT_VERSION=$(${MAVEN} ${MVN_ARGS} org.apache.maven.plugins:maven-help-plugin:2.1.1:evaluate -Dexpression=project.version | sed -n -e '/Down.*/ d' -e '/^\[.*\]/ !{ /^[0-9]/ { p; q } }')
+    CURRENT_VERSION=$(${MAVEN} ${MVN_ARGS} org.apache.maven.plugins:maven-help-plugin:2.1.1:evaluate \
+    -Dexpression=project.version \
+    | sed -n -e '/Down.*/ d' -e '/^\[.*\]/ !{ /^[0-9]/ { p; q } }')
     checkout_branch $BRANCH_NAME
     if test "$CURRENT_VERSION" = "${CURRENT_VERSION%-SNAPSHOT}"; then
         echo "$SELF: version '${CURRENT_VERSION}' specified is not a snapshot"
@@ -229,42 +230,55 @@ isValidVersion(){
 }
 
 isValidGitRepo(){
-    local  repo=$1
-    local  stat=1
-    ${GIT}  ls-remote $repo |grep -q HEAD
-    stat=$?
+    local  _REPO=$1
+    local  _stat=1
+    ${GIT}  ls-remote $_REPO |grep -q HEAD
+    _stat=$?
+    return $_stat
+}
+
+isDirWritable(){
+    local  _DIR=$1
+    local  _stat=1
+    [ -w $_DIR ] && stat=0
     return $stat
 }
 
 post_release(){
 
- echo "Execution de la Post-implantation du projet : ${POM_GROUPID}:${POM_ARTIFACTID}"
- if [ ! doPostRelease ] ;then
-  echo "Le code source differe de celui sur lequel la phase de pre-release a été effectuées. Recommencez le release"
-  exit 1
+ local _GIT_REPO_LOCATION=$1
+ if $(${GIT} rev-parse 2>/dev/null); then
+  echo "Execution de la Post-implantation du projet : ${POM_GROUPID}:${POM_ARTIFACTID}"
+  local _PWD=$(pwd)
+  if [ ! doPostRelease ] ;then
+   echo "Le code source differe de celui sur lequel la phase de pre-release a été effectuées. Recommencez le release"
+   exit 1
+  else
+   echo "Mise a jour des branches master et develop sur le serveur git"
+   #cd ${_GIT_REPO_LOCATION} && push_changes && cd ${_PWD}
+   echo "Deplacement de artefacts de Pre-release vers Release"
+  fi
  else
-  echo "Mise a jour des branches master et develop sur le serveur git"
-  #push_changesa
-  echo "Deplacement de artefacts de Pre-release vers Release"
+  echo "Aucune trace de staging (pre-release). Verifier l'URL du depot ou Reexecuter la phase de staging " && exit 1 
  fi
 }
 
 release(){
- echo "Execution de la realisation Maven Project : ${POM_GROUPID}:${POM_ARTIFACTID}"
  SCM_COMMENT_PREFIX="[release]"
  local _ATYPE=$1 # jar
  local _RTYPE=$2 # stage or post
  local _USER_VERSION=$3
+ echo "Release : type=${_ATYPE} - phase=${_RTYPE} - version=${_USER_VERSION:-\"celle du pom\"}"
+ #echo "Project : ${POM_GROUPID}:${POM_ARTIFACTID}"
  STABLE_VERSION=$(get_dev_version)
+ [ $? -ne 0 ] && echo "Verifier que Java et Maven fonctionnent correctement" && exit 1
  CURRENT_VERSION="${STABLE_VERSION}-SNAPSHOT"
  if [ "${_USER_VERSION}" != "" ];then
     DEV_VERSION=${STABLE_VERSION}
     STABLE_VERSION=${_USER_VERSION}
  fi
  #CURRENT_VERSION="${STABLE_VERSION}-SNAPSHOT"
- echo "--------------------------------------------------"
- echo " Release branch $DEV $CURRENT_VERSION to $STABLE_VERSION "
- echo "--------------------------------------------------"
+ echo "Release : branche=${DEV} - version snapshot=${CURRENT_VERSION} - version release=${STABLE_VERSION}"
  exit
  #assert_tag_version_exist $STABLE_VERSION
  track_remote_branch ${MASTER}
@@ -291,22 +305,24 @@ release(){
 
 function clone_repo(){
  local _GIT_REPO=$1
- _WS=${WORKSPACE}
- if [ "${_WS}" = "" ] ;then
-  _WS=$(mktemp -d)
-  _WIPE_IT_LATER=${_WS}
- else
-  find ${_WS} -name . -o -prune -exec rm -fr -- {} +
- fi
- ${GIT} clone ${_GIT_REPO} "${_WS}"
- [ $? -eq 0 ] && echo ${_WS}
+ local _GIT_LOCAL=$2
+ # find ${_GIT_LOCAL} -name . -o -prune -exec rm -fr -- {} +
+ [ -d ${_GIT_LOCAL} ] && rm -rf ${_GIT_LOCAL}
+ ${GIT} clone ${_GIT_REPO} "${_GIT_LOCAL}"
 }
+
+function update_repo(){
+ local _GIT_LOCAL=$1
+ cd "${_GIT_LOCAL}" &&  ${GIT} pull 
+}
+
 
 # defaults
 _STAGING_REPO=PreRelease
-_RELEASE_WS=.
+_RELEASE_WS=/tmp/release-builds
+_RELEASE_MODE=std
 # creer une structure pour chaque depot sous le ws
-while getopts ":a:t:r:v:d:w:" opt; do
+while getopts ":a:t:r:v:d:w:m:" opt; do
   case $opt in
     t)
       _RELEASE_ARTIFACT=$OPTARG # 1: jar|webapp
@@ -336,11 +352,18 @@ while getopts ":a:t:r:v:d:w:" opt; do
         fi
       fi
       ;;
+    m)
+      _RELEASE_MODE=$OPTARG # ic ou standalone
+      if [ "${_RELEASE_MODE}" != "ic" -a "${_RELEASE_MODE}" != "std" ] ; then
+      echo -n -e "Option -m , valeurs possibles : ic|std \n - ic : integrattion dans un environnement d'IC \
+      \n - std : fonctionnement en mode standalone\n" && exit 1
+      fi
+      ;;
     w)
       _RELEASE_WS=$OPTARG # depot git
       if [ "${_RELEASE_WS}" != "" ];then
-        if ! isValidDir ${_RELEASE_WS}; then
-          echo "Le repertoire de travail  est inaccessible." && exit 1
+        if ! isDirWritable ${_RELEASE_WS}; then
+          echo "Impossible d'ecrire dans le repertoire de travail: ${_RELEASE_WS} ." && exit 1
         fi
       fi
       ;;
@@ -358,19 +381,25 @@ while getopts ":a:t:r:v:d:w:" opt; do
   esac
 done
 
+[ "${_RELEASE_GIT_REPOS}" = "" ] && echo "L'option -d (URL du depot git de la forme git@serveur_git:GROUP/PROJET.git) est obligatoire" && exit 1
+
 if [ "${_RELEASE_ARTIFACT}" = "" ] ;then 
  echo "L'option -t est obligatoire" && exit 1
 else
+ _GIT_GROUPNAME=$(echo ${_RELEASE_GIT_REPOS}|awk -F'/' '{print $(NF-1)}')
+ _GIT_REPONAME=$(echo ${_RELEASE_GIT_REPOS}|awk -F'/' '{print $NF}'|sed 's/.git//')
+ _GIT_LOCAL_PATH=${_RELEASE_WS}/${_GIT_GROUPNAME}/${_GIT_REPONAME}
  case ${_RELEASE_ARTIFACT} in
     # release jar (one shot = les autres options sont inutiles)
-    jar) clone_repo $_RELEASE_GIT_REPOS ${_RELEASE_WS} && cd ${_RELEASE_WS} && release jar ${_RELEASE_VERSION} && cd -
+    jar) clone_repo ${_RELEASE_GIT_REPOS} ${_GIT_LOCAL_PATH} && cd ${_GIT_LOCAL_PATH} && release jar release ${_RELEASE_VERSION} && cd -
          ;;
     webapp)
          if [ "${_RELEASE_TYPE}" = "" ] ; then 
            echo "L'option -a devient obligatoire quand l'option -t est presente" && $0 -t webapp -a xxx && exit 1
          else
 	   case ${_RELEASE_TYPE} in
-	     post) echo post_release ;;
+	     post) echo post_release ${_GIT_CLONE_LOCATION} # warning : pendant le TA (release, il faut que les branches master et develop soient gelées
+	     ;;
 	     stage) echo "release webapp stage ${_STAGING_REPO} ${_RELEASE_VERSION}";;
            esac
          fi
