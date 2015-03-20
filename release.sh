@@ -231,7 +231,7 @@ isValidVersion(){
 isValidGitRepo(){
     local  repo=$1
     local  stat=1
-    ${GIT}  ls-remote $repo |grep HEAD
+    ${GIT}  ls-remote $repo |grep -q HEAD
     stat=$?
     return $stat
 }
@@ -250,7 +250,6 @@ post_release(){
 }
 
 release(){
- #webapp stage ${_RELEASE_VERSION}
  echo "Execution de la realisation Maven Project : ${POM_GROUPID}:${POM_ARTIFACTID}"
  SCM_COMMENT_PREFIX="[release]"
  local _ATYPE=$1 # jar
@@ -266,6 +265,7 @@ release(){
  echo "--------------------------------------------------"
  echo " Release branch $DEV $CURRENT_VERSION to $STABLE_VERSION "
  echo "--------------------------------------------------"
+ exit
  #assert_tag_version_exist $STABLE_VERSION
  track_remote_branch ${MASTER}
  track_remote_branch ${DEV}
@@ -289,10 +289,24 @@ release(){
  fi
 }
 
+function clone_repo(){
+ local _GIT_REPO=$1
+ _WS=${WORKSPACE}
+ if [ "${_WS}" = "" ] ;then
+  _WS=$(mktemp -d)
+  _WIPE_IT_LATER=${_WS}
+ else
+  find ${_WS} -name . -o -prune -exec rm -fr -- {} +
+ fi
+ ${GIT} clone ${_GIT_REPO} "${_WS}"
+ [ $? -eq 0 ] && echo ${_WS}
+}
+
 # defaults
 _STAGING_REPO=PreRelease
-
-while getopts ":a:t:r:v:" opt; do
+_RELEASE_WS=.
+# creer une structure pour chaque depot sous le ws
+while getopts ":a:t:r:v:d:w:" opt; do
   case $opt in
     t)
       _RELEASE_ARTIFACT=$OPTARG # 1: jar|webapp
@@ -322,6 +336,14 @@ while getopts ":a:t:r:v:" opt; do
         fi
       fi
       ;;
+    w)
+      _RELEASE_WS=$OPTARG # depot git
+      if [ "${_RELEASE_WS}" != "" ];then
+        if ! isValidDir ${_RELEASE_WS}; then
+          echo "Le repertoire de travail  est inaccessible." && exit 1
+        fi
+      fi
+      ;;
     r)
       _STAGING_REPO=$OPTARG # repo of the release
       ;;
@@ -341,7 +363,7 @@ if [ "${_RELEASE_ARTIFACT}" = "" ] ;then
 else
  case ${_RELEASE_ARTIFACT} in
     # release jar (one shot = les autres options sont inutiles)
-    jar) echo "release jar ${_RELEASE_VERSION}"
+    jar) clone_repo $_RELEASE_GIT_REPOS ${_RELEASE_WS} && cd ${_RELEASE_WS} && release jar ${_RELEASE_VERSION} && cd -
          ;;
     webapp)
          if [ "${_RELEASE_TYPE}" = "" ] ; then 
@@ -356,17 +378,6 @@ else
  esac
 fi
 
-function clone_repo(){
- local _GIT_REPO=$1
- local _WS=${WORKSPACE}
- if [ "${_WS}" = "" ] then 
-  _WS=$(mktemp -d)
-  _WIPE_IT_LATER=${_WS}
- else
-  find ${_WS} -name . -o -prune -exec rm -fr -- {} + 
- fi
- ${GIT} clone ${_GIT_REPO} "${_WS}"
-}
-
-
- [ -d ${_WIPE_IT_LATER} ] && echo "echo dont forget to delete "${_WIPE_IT_LATER}" if out of Jenkins"
+echo "************ ${_WIPE_IT_LATER}"
+#[ -d ${_WIPE_IT_LATER} ] && echo "Suppression du repertoire de travail ${_WIPE_IT_LATER}" && \
+#rm -rf ${_WIPE_IT_LATER}
