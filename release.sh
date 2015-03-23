@@ -19,9 +19,20 @@ RELEASE=release
 HOTFIX=hotfix
 GIT=/opt/gitlab/embedded/bin/git
 MAVEN=/opt/apache-maven-3.2.5/bin/mvn
+GREP=grep
+XMLLINT=xmllint
+# defaults
+_RELEASE_REPO="http://localhost:8081/nexus/content/repositories/Releases/"
+_STAGING_REPO="http://localhost:8081/nexus/content/repositories/PreReleases/"
+_RELEASE_WS=/tmp/release-builds
+_RELEASE_MODE=std
+_RELEASE_VERSION=default
+
 # LQ
 MAVEN=/data/apps/maven/bin/mvn
 GREP=grep
+_RELEASE_REPO="https://std.loto-quebec.com/nexus/content/repositories/Releases/"
+_STAGING_REPO="https://std.loto-quebec.com/nexus/content/repositories/PreReleases/"
 MVN_DEBUG_RELEASE=true
 
 # The most important line in each script
@@ -55,6 +66,26 @@ remove_release_branch() {
     echo "$RELEASE_BRANCH"
     remove_branch=$(${GIT} branch -D ${RELEASE_BRANCH} 2>&1)
 }
+
+mvn_post_stage(){
+
+   local _GIT_REPO_LOCATION=$1
+  
+   # echo publication des artefacts dans Release
+   echo "Publication des artefacts dans le repository final : Release"
+   MVN_DEPLOY_RELEASE_ARGS="-DaltReleaseDeploymentRepository=nexus::default::${_RELEASE_REPO} -DdeployAtEnd=true"
+   ${MAVEN} $MVN_ARGS ${MVN_DEPLOY_RELEASE_ARGS_ARGS}  -B -f target/checkout deploy && \
+   echo "Publication du site" && \
+   ${MAVEN} $MVN_ARGS ${MVN_DEPLOY_RELEASE_ARGS}  -B -f target/checkout site-deploy  
+
+   # marquer la fin du post
+   #rm -f doPostRelease
+  fi
+ else
+  echo "Aucune trace de staging (pre-release). Verifier l'URL du depot ou Reexecuter la phase de staging " && exit 1
+ fi
+}
+
 
 mvn_stage() {
     # release webapp stage ${_GIT_LOCAL_PATH} ${_STAGING_REPO} ${_RELEASE_VERSION}
@@ -182,7 +213,7 @@ get_dev_version(){
     #CURRENT_VERSION=$(python -c "import xml.etree.ElementTree as ET; \
     # print(ET.parse(open('pom.xml')).getroot().find( \
     # '{http://maven.apache.org/POM/4.0.0}version').text)")
-    CURRENT_VERSION=$(echo -e 'setns x=http://maven.apache.org/POM/4.0.0\ncat /x:project/x:version/text()' | xmllint --shell pom.xml | grep -v /)
+    CURRENT_VERSION=$(echo -e 'setns x=http://maven.apache.org/POM/4.0.0\ncat /x:project/x:version/text()' | ${XMLLINT} --shell pom.xml | grep -v /)
     checkout_branch $BRANCH_NAME
     if test "$CURRENT_VERSION" = "${CURRENT_VERSION%-SNAPSHOT}"; then
         echo "$SELF: version '${CURRENT_VERSION}' specified is not a snapshot"
@@ -191,30 +222,6 @@ get_dev_version(){
         STABLE_VERSION="${CURRENT_VERSION%-SNAPSHOT}"
         echo $STABLE_VERSION
     fi
- else
-    echo "$SELF: you are not in a git directory"
-    exit 1
- fi
-
-}
-
-
-get_version(){
-
- # First get the working directory
- test -n "$MVN_ARGS" && {
-    echo "Maven arguments provided : $MVN_ARGS."
- }
- #echo -n "Detecting version number... "
- if $(${GIT} rev-parse 2>/dev/null); then
-    BRANCH_NAME=$(${GIT} symbolic-ref -q HEAD)
-    BRANCH_NAME=${BRANCH_NAME##refs/heads/}
-    WORKING_DIR=$(${GIT} rev-parse --show-toplevel)
-    cd $WORKING_DIR
-    checkout_branch $MASTER
-    STABLE_VERSION=$(${MAVEN} ${MVN_ARGS} org.apache.maven.plugins:maven-help-plugin:2.1.1:evaluate -Dexpression=project.version | sed -n -e '/Down.*/ d' -e '/^\[.*\]/ !{ /^[0-9]/ { p; q } }')
-    checkout_branch $BRANCH_NAME
-    echo $STABLE_VERSION
  else
     echo "$SELF: you are not in a git directory"
     exit 1
@@ -263,21 +270,11 @@ post_release(){
    echo "Le code source differe de celui sur lequel la phase de pre-release a été effectuée. Recommencez le release"
    exit 1
   else
-   echo "Mise a jour des branches master et develop sur le serveur git"
    #cd ${_GIT_REPO_LOCATION} && push_changes && cd ${_PWD}
-   echo "Deplacement de artefacts du repository Nexus Pre-release vers Release"
+   mvn_post_stage && echo "Mise a jour des branches master et develop sur le serveur git" && push_changes
 
-    MVN_RELEASE_STAGING_REPO=$1
-    MVN_USER_VERSION=$2
-    MVN_RELEASE_PREPARE_ARGS="-DpushChanges=false -DtagNameFormat=@{project.version} "
-    [ "${MVN_USER_VERSION}" != "" ] && MVN_RELEASE_PREPARE_ARGS="$MVN_RELEASE_PREPARE_ARGS -DreleaseVersion=${MVN_USER_VERSION}"
-    MVN_RELEASE_PERFORM_ARGS="-DlocalCheckout=true -Dgoals=install "
-    MVN_DEPLOY_STAGING_ARGS="-DaltReleaseDeploymentRepository=nexus::default::${MVN_RELEASE_STAGING_REPO} -DdeployAtEnd=true"
-    ${MAVEN} $MVN_ARGS ${MVN_RELEASE_PREPARE_ARGS} -B release:prepare && \
-    ${MAVEN} $MVN_ARGS ${MVN_RELEASE_PERFORM_ARGS} -B release:perform && \
-    ${MAVEN} $MVN_ARGS ${MVN_DEPLOY_STAGING_ARGS}  -B -f target/checkout deploy  # -DdeployAtEnd=true
-
-   # generation su site (deploy-site)
+   # marquer la fin du post
+   #rm -f doPostRelease
   fi
  else
   echo "Aucune trace de staging (pre-release). Verifier l'URL du depot ou Reexecuter la phase de staging " && exit 1 
@@ -342,12 +339,6 @@ function update_repo(){
 }
 
 
-# defaults
-_STAGING_REPO="http://localhost:8081/nexus/content/repositories/PreReleases/"
-_RELEASE_WS=/tmp/release-builds
-_RELEASE_MODE=std
-_RELEASE_VERSION=default
-# creer une structure pour chaque depot sous le ws
 while getopts ":a:t:r:v:d:w:m:" opt; do
   case $opt in
     t)
@@ -386,7 +377,7 @@ while getopts ":a:t:r:v:d:w:m:" opt; do
       fi
       ;;
     w)
-      _RELEASE_WS=$OPTARG # depot git
+      _RELEASE_WS=$OPTARG # workspace
       if [ "${_RELEASE_WS}" != "" ];then
         if ! isDirWritable ${_RELEASE_WS}; then
           echo "Impossible d'ecrire dans le repertoire de travail: ${_RELEASE_WS} ." && exit 1
@@ -409,6 +400,9 @@ done
 
 [ "${_RELEASE_GIT_REPOS}" = "" ] && echo "L'option -d (URL du depot git de la forme git@serveur_git:GROUP/PROJET.git) est obligatoire" && exit 1
 
+[ "${_RELEASE_MODE}" = "ic" ] && _RELEASE_WS=${WORKSPACE-_RELEASE_WS}
+
+
 if [ "${_RELEASE_ARTIFACT}" = "" ] ;then 
  echo "L'option -t est obligatoire" && exit 1
 else
@@ -419,26 +413,28 @@ else
     # release jar (one shot = les autres options sont inutiles)
     jar) clone_repo ${_RELEASE_GIT_REPOS} ${_GIT_LOCAL_PATH} && \
          cd ${_GIT_LOCAL_PATH} && \
-         release jar release ${_RELEASE_VERSION} && cd -
+         release jar release ${_RELEASE_VERSION} && cd -  >/dev/null 2>&1
          ;;
     webapp)
          if [ "${_RELEASE_TYPE}" = "" ] ; then 
            echo "L'option -a devient obligatoire quand l'option -t est presente" && $0 -t webapp -a xxx && exit 1
          else
 	   case ${_RELEASE_TYPE} in
-	     post) post_release ${_GIT_LOCAL_PATH} # warning : pendant le TA (release, il faut que les branches master et develop soient gelées
-	     ;;
+	     post) cd ${_GIT_LOCAL_PATH} && \
+                   post_release ${_GIT_LOCAL_PATH} && \
+                   cd -  >/dev/null 2>&1 && \
+                   echo "Suppression du repertoire de travail " && rm -rf  ${_GIT_LOCAL_PATH} # master et develop doivent etre gelées
+	     	;;
 	     stage) clone_repo ${_RELEASE_GIT_REPOS} ${_GIT_LOCAL_PATH} && \
                     cd ${_GIT_LOCAL_PATH} && \
                     release webapp stage ${_RELEASE_VERSION} ${_STAGING_REPO} && \
-                    cd -
-             ;;
+                    cd -  >/dev/null 2>&1
+             	;;
            esac
          fi
 	;;
  esac
 fi
 
-echo "************ ${_WIPE_IT_LATER}"
 #[ -d ${_WIPE_IT_LATER} ] && echo "Suppression du repertoire de travail ${_WIPE_IT_LATER}" && \
 #rm -rf ${_WIPE_IT_LATER}
