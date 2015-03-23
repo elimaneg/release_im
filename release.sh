@@ -57,14 +57,19 @@ remove_release_branch() {
 }
 
 mvn_stage() {
-
+    # release webapp stage ${_GIT_LOCAL_PATH} ${_STAGING_REPO} ${_RELEASE_VERSION}
+    
+    MVN_RELEASE_STAGING_REPO=$1
     MVN_USER_VERSION=$2
-    MVN_RELEASE_STAGING_REPOSITORY=$1
-    MVN_RELEASE_STAGE_ARGS="-DpushChanges=false -DtagNameFormat=@{project.version} -DstagingRepository="${MVN_RELEASE_STAGING_REPOSITORY}""
-    [ "${MVN_USER_VERSION}" != "" ] && MVN_RELEASE_STAGE_ARGS="$MVN_RELEASE_PREPARE_ARGS -DreleaseVersion=${MVN_USER_VERSION}"
-    MVN_RELEASE_PERFORM_ARGS="-DlocalCheckout=true -Dgoals=deploy"
-    ${MAVEN} $MVN_ARGS ${MVN_RELEASE_STAGE_ARGS} -B release:stage && \
-    ${MAVEN} $MVN_ARGS ${MVN_RELEASE_PERFORM_ARGS} release:perform
+    MVN_RELEASE_PREPARE_ARGS="-DpushChanges=false -DtagNameFormat=@{project.version} "
+    [ "${MVN_USER_VERSION}" != "" ] && MVN_RELEASE_PREPARE_ARGS="$MVN_RELEASE_PREPARE_ARGS -DreleaseVersion=${MVN_USER_VERSION}"
+    MVN_RELEASE_PERFORM_ARGS="-DlocalCheckout=true -Dgoals=install "
+    MVN_DEPLOY_STAGING_ARGS="-DaltReleaseDeploymentRepository=nexus::default::${MVN_RELEASE_STAGING_REPO} -DdeployAtEnd=true"
+    ${MAVEN} $MVN_ARGS ${MVN_RELEASE_PREPARE_ARGS} -B release:prepare && \
+    ${MAVEN} $MVN_ARGS ${MVN_RELEASE_PERFORM_ARGS} -B release:perform && \
+    ${MAVEN} $MVN_ARGS ${MVN_DEPLOY_STAGING_ARGS}  -B -f target/checkout deploy  # -DdeployAtEnd=true
+    # && \
+    #${MAVEN} $MVN_ARGS ${MVN_RELEASE_PERFORM_ARGS} release:perform
     #echo -n "Staging release with maven-release-plugin... "
     #mvn_release_staging=$(${MAVEN} ${MVN_ARGS} ${MVN_RELEASE_PREPARE_ARGS} -B release:stage && \
     #${MAVEN} ${MVN_ARGS} ${MVN_RELEASE_PERFORM_ARGS} release:perform)
@@ -78,7 +83,7 @@ mvn_release() {
     MVN_USER_VERSION=$1
     MVN_RELEASE_PREPARE_ARGS="-DpushChanges=false -DtagNameFormat=@{project.version} "
     [ "${MVN_USER_VERSION}" != "" ] && MVN_RELEASE_PREPARE_ARGS="$MVN_RELEASE_PREPARE_ARGS -DreleaseVersion=${MVN_USER_VERSION}"
-    MVN_RELEASE_PERFORM_ARGS="-DlocalCheckout=true -Dgoals=deploy"
+    MVN_RELEASE_PERFORM_ARGS="-DlocalCheckout=true -Dgoals=install" # deploy with jenkins upload artifact
     # Phase release:prepare cree 2 commits dans le repo local : 
     # Commit 1 # Change la version du pom (enleve -SNAPSHOT) et ajoute le nom du tag dans la section scm connection du pom.xml
     # Creation d'un tag dans le repo local
@@ -171,9 +176,13 @@ get_dev_version(){
     WORKING_DIR=$(${GIT} rev-parse --show-toplevel)
     cd $WORKING_DIR
     checkout_branch ${DEV}
-    CURRENT_VERSION=$(${MAVEN} ${MVN_ARGS} org.apache.maven.plugins:maven-help-plugin:2.1.1:evaluate \
-    -Dexpression=project.version \
-    | sed -n -e '/Down.*/ d' -e '/^\[.*\]/ !{ /^[0-9]/ { p; q } }')
+    #CURRENT_VERSION=$(${MAVEN} ${MVN_ARGS} org.apache.maven.plugins:maven-help-plugin:2.1.1:evaluate \
+    #-Dexpression=project.version \
+    #| sed -n -e '/Down.*/ d' -e '/^\[.*\]/ !{ /^[0-9]/ { p; q } }')
+    #CURRENT_VERSION=$(python -c "import xml.etree.ElementTree as ET; \
+    # print(ET.parse(open('pom.xml')).getroot().find( \
+    # '{http://maven.apache.org/POM/4.0.0}version').text)")
+    CURRENT_VERSION=$(echo -e 'setns x=http://maven.apache.org/POM/4.0.0\ncat /x:project/x:version/text()' | xmllint --shell pom.xml | grep -v /)
     checkout_branch $BRANCH_NAME
     if test "$CURRENT_VERSION" = "${CURRENT_VERSION%-SNAPSHOT}"; then
         echo "$SELF: version '${CURRENT_VERSION}' specified is not a snapshot"
@@ -248,15 +257,27 @@ post_release(){
 
  local _GIT_REPO_LOCATION=$1
  if $(${GIT} rev-parse 2>/dev/null); then
-  echo "Execution de la Post-implantation du projet : ${POM_GROUPID}:${POM_ARTIFACTID}"
+  echo "Post-release : ${_GIT_REPO_LOCATION}"
   local _PWD=$(pwd)
-  if [ ! doPostRelease ] ;then
-   echo "Le code source differe de celui sur lequel la phase de pre-release a été effectuées. Recommencez le release"
+  if [ ! -f doPostRelease ] ;then
+   echo "Le code source differe de celui sur lequel la phase de pre-release a été effectuée. Recommencez le release"
    exit 1
   else
    echo "Mise a jour des branches master et develop sur le serveur git"
    #cd ${_GIT_REPO_LOCATION} && push_changes && cd ${_PWD}
-   echo "Deplacement de artefacts de Pre-release vers Release"
+   echo "Deplacement de artefacts du repository Nexus Pre-release vers Release"
+
+    MVN_RELEASE_STAGING_REPO=$1
+    MVN_USER_VERSION=$2
+    MVN_RELEASE_PREPARE_ARGS="-DpushChanges=false -DtagNameFormat=@{project.version} "
+    [ "${MVN_USER_VERSION}" != "" ] && MVN_RELEASE_PREPARE_ARGS="$MVN_RELEASE_PREPARE_ARGS -DreleaseVersion=${MVN_USER_VERSION}"
+    MVN_RELEASE_PERFORM_ARGS="-DlocalCheckout=true -Dgoals=install "
+    MVN_DEPLOY_STAGING_ARGS="-DaltReleaseDeploymentRepository=nexus::default::${MVN_RELEASE_STAGING_REPO} -DdeployAtEnd=true"
+    ${MAVEN} $MVN_ARGS ${MVN_RELEASE_PREPARE_ARGS} -B release:prepare && \
+    ${MAVEN} $MVN_ARGS ${MVN_RELEASE_PERFORM_ARGS} -B release:perform && \
+    ${MAVEN} $MVN_ARGS ${MVN_DEPLOY_STAGING_ARGS}  -B -f target/checkout deploy  # -DdeployAtEnd=true
+
+   # generation su site (deploy-site)
   fi
  else
   echo "Aucune trace de staging (pre-release). Verifier l'URL du depot ou Reexecuter la phase de staging " && exit 1 
@@ -264,38 +285,42 @@ post_release(){
 }
 
 release(){
+
  SCM_COMMENT_PREFIX="[release]"
  local _ATYPE=$1 # jar
  local _RTYPE=$2 # stage or post
+ local _STAGING_REPO=$4
  local _USER_VERSION=$3
  echo "Release : type=${_ATYPE} - phase=${_RTYPE} - version=${_USER_VERSION:-\"celle du pom\"}"
  #echo "Project : ${POM_GROUPID}:${POM_ARTIFACTID}"
  STABLE_VERSION=$(get_dev_version)
  [ $? -ne 0 ] && echo "Verifier que Java et Maven fonctionnent correctement" && exit 1
  CURRENT_VERSION="${STABLE_VERSION}-SNAPSHOT"
- if [ "${_USER_VERSION}" != "" ];then
+ if [ "${_USER_VERSION}" != "default" ];then
     DEV_VERSION=${STABLE_VERSION}
     STABLE_VERSION=${_USER_VERSION}
  fi
  #CURRENT_VERSION="${STABLE_VERSION}-SNAPSHOT"
  echo "Release : branche=${DEV} - version snapshot=${CURRENT_VERSION} - version release=${STABLE_VERSION}"
- exit
  #assert_tag_version_exist $STABLE_VERSION
- track_remote_branch ${MASTER}
- track_remote_branch ${DEV}
+ track_remote_branch ${MASTER}  && \
+ track_remote_branch ${DEV} && \
  create_release_branch $STABLE_VERSION
+ [ $? -ne 0 ] && echo "Echec du tracking des branches" && exit 1
  if [ "${_RTYPE}" = "stage" ]; then 
    mvn_stage ${_STAGING_REPO} $STABLE_VERSION
  else
    mvn_release $STABLE_VERSION 
  fi
- merging_to_develop $STABLE_VERSION
- merging_to_master $STABLE_VERSION
- remove_release_branch $STABLE_VERSION
+ [ $? -ne 0 ] && echo "Echec du build Maven" && exit 1
+ merging_to_develop $STABLE_VERSION && \
+ merging_to_master $STABLE_VERSION && \
+ remove_release_branch $STABLE_VERSION && \
  checkout_branch $BRANCH_NAME
+ [ $? -ne 0 ] && echo "Echec de la fusion des branches" && exit 1
  if [ "${_ATYPE}" = "jar" ]; then
   # jar
-  push_changes
+  echo "RESTE : push_changes"
  else
   # webapp
   echo "Prochaine etape : deployer l'application en TA (webapp) a partir du repository Nexus Pre-release"
@@ -318,9 +343,10 @@ function update_repo(){
 
 
 # defaults
-_STAGING_REPO=PreRelease
+_STAGING_REPO="http://localhost:8081/nexus/content/repositories/PreReleases/"
 _RELEASE_WS=/tmp/release-builds
 _RELEASE_MODE=std
+_RELEASE_VERSION=default
 # creer une structure pour chaque depot sous le ws
 while getopts ":a:t:r:v:d:w:m:" opt; do
   case $opt in
@@ -386,21 +412,27 @@ done
 if [ "${_RELEASE_ARTIFACT}" = "" ] ;then 
  echo "L'option -t est obligatoire" && exit 1
 else
- _GIT_GROUPNAME=$(echo ${_RELEASE_GIT_REPOS}|awk -F'/' '{print $(NF-1)}')
+ _GIT_GROUPNAME=$(echo ${_RELEASE_GIT_REPOS}|awk -F'/|:' '{print $(NF-1)}')
  _GIT_REPONAME=$(echo ${_RELEASE_GIT_REPOS}|awk -F'/' '{print $NF}'|sed 's/.git//')
  _GIT_LOCAL_PATH=${_RELEASE_WS}/${_GIT_GROUPNAME}/${_GIT_REPONAME}
  case ${_RELEASE_ARTIFACT} in
     # release jar (one shot = les autres options sont inutiles)
-    jar) clone_repo ${_RELEASE_GIT_REPOS} ${_GIT_LOCAL_PATH} && cd ${_GIT_LOCAL_PATH} && release jar release ${_RELEASE_VERSION} && cd -
+    jar) clone_repo ${_RELEASE_GIT_REPOS} ${_GIT_LOCAL_PATH} && \
+         cd ${_GIT_LOCAL_PATH} && \
+         release jar release ${_RELEASE_VERSION} && cd -
          ;;
     webapp)
          if [ "${_RELEASE_TYPE}" = "" ] ; then 
            echo "L'option -a devient obligatoire quand l'option -t est presente" && $0 -t webapp -a xxx && exit 1
          else
 	   case ${_RELEASE_TYPE} in
-	     post) echo post_release ${_GIT_CLONE_LOCATION} # warning : pendant le TA (release, il faut que les branches master et develop soient gelées
+	     post) post_release ${_GIT_LOCAL_PATH} # warning : pendant le TA (release, il faut que les branches master et develop soient gelées
 	     ;;
-	     stage) echo "release webapp stage ${_STAGING_REPO} ${_RELEASE_VERSION}";;
+	     stage) clone_repo ${_RELEASE_GIT_REPOS} ${_GIT_LOCAL_PATH} && \
+                    cd ${_GIT_LOCAL_PATH} && \
+                    release webapp stage ${_RELEASE_VERSION} ${_STAGING_REPO} && \
+                    cd -
+             ;;
            esac
          fi
 	;;
