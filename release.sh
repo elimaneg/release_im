@@ -21,9 +21,11 @@ GIT=/opt/gitlab/embedded/bin/git
 MAVEN=/opt/apache-maven-3.2.5/bin/mvn
 GREP=grep
 XMLLINT=xmllint
+_REPO_SERVER="localhost:8081"
+WGET=wget
 # defaults
-_RELEASE_REPO="http://localhost:8081/nexus/content/repositories/Releases/"
-_STAGING_REPO="http://localhost:8081/nexus/content/repositories/PreReleases/"
+_RELEASE_REPO="${_REPO_SERVER}/nexus/content/repositories/Releases/"
+_STAGING_REPO="${_REPO_SERVER}/nexus/content/repositories/PreReleases/"
 _RELEASE_WS=/tmp/release-builds
 _RELEASE_MODE=std
 _RELEASE_VERSION=default
@@ -31,8 +33,8 @@ _RELEASE_VERSION=default
 # LQ
 MAVEN=/data/apps/maven/bin/mvn
 GREP=grep
-_RELEASE_REPO="https://std.loto-quebec.com/nexus/content/repositories/Releases/"
-_STAGING_REPO="https://std.loto-quebec.com/nexus/content/repositories/PreReleases/"
+#_RELEASE_REPO="https://std.loto-quebec.com/nexus/content/repositories/Releases/"
+#_STAGING_REPO="https://std.loto-quebec.com/nexus/content/repositories/PreReleases/"
 MVN_DEBUG_RELEASE=true
 
 # The most important line in each script
@@ -80,10 +82,6 @@ mvn_post_stage(){
 
    # marquer la fin du post
    #rm -f doPostRelease
-  fi
- else
-  echo "Aucune trace de staging (pre-release). Verifier l'URL du depot ou Reexecuter la phase de staging " && exit 1
- fi
 }
 
 
@@ -260,6 +258,14 @@ isDirWritable(){
     return $stat
 }
 
+isNexusAlive(){
+    local  _URL=$1
+    local  _stat=1
+    wget_output=$(${WGET} -q "${_URL}")
+    [ $? -eq 0 ] && stat=0
+    return $stat
+}
+
 post_release(){
 
  local _GIT_REPO_LOCATION=$1
@@ -339,7 +345,7 @@ function update_repo(){
 }
 
 
-while getopts ":a:t:r:v:d:w:m:" opt; do
+while getopts ":a:t:s:v:d:w:m:" opt; do
   case $opt in
     t)
       _RELEASE_ARTIFACT=$OPTARG # 1: jar|webapp
@@ -384,8 +390,8 @@ while getopts ":a:t:r:v:d:w:m:" opt; do
         fi
       fi
       ;;
-    r)
-      _STAGING_REPO=$OPTARG # repo of the release
+    s)
+      _REPO_SERVER=$OPTARG # repo of the release
       ;;
     \?)
       echo "Option invalide: -$OPTARG" >&2
@@ -402,7 +408,13 @@ done
 
 [ "${_RELEASE_MODE}" = "ic" ] && _RELEASE_WS=${WORKSPACE-_RELEASE_WS}
 
-
+_RELEASE_REPO="${_REPO_SERVER}/nexus/content/repositories/Releases/"
+_STAGING_REPO="${_REPO_SERVER}/nexus/content/repositories/PreReleases/"
+if ! isNexusAlive "${_RELEASE_REPO}/archetype-catalog.xml"; then
+ echo "Le serveur Nexus est inaccessible : ${_RELEASE_REPO}/" && exit 1
+fi
+echo "$_RELEASE_REPO $_STAGING_REPO"
+exit
 if [ "${_RELEASE_ARTIFACT}" = "" ] ;then 
  echo "L'option -t est obligatoire" && exit 1
 else
@@ -435,6 +447,3 @@ else
 	;;
  esac
 fi
-
-#[ -d ${_WIPE_IT_LATER} ] && echo "Suppression du repertoire de travail ${_WIPE_IT_LATER}" && \
-#rm -rf ${_WIPE_IT_LATER}
