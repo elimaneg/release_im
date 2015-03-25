@@ -21,11 +21,10 @@ GIT=/opt/gitlab/embedded/bin/git
 MAVEN=/opt/apache-maven-3.2.5/bin/mvn
 GREP=grep
 XMLLINT=xmllint
-_REPO_SERVER="localhost:8081"
+_REPO_SERVER="https://std.loto-quebec.com"
 WGET=wget
-# defaults
-_RELEASE_REPO="${_REPO_SERVER}/nexus/content/repositories/Releases/"
-_STAGING_REPO="${_REPO_SERVER}/nexus/content/repositories/PreReleases/"
+_RELEASE_REPO="${_REPO_SERVER}/nexus/content/repositories/releases/"
+_STAGING_REPO="${_REPO_SERVER}/nexus/content/repositories/prereleases/"
 _RELEASE_WS=/tmp/release-builds
 _RELEASE_MODE=std
 _RELEASE_VERSION=default
@@ -33,9 +32,6 @@ _RELEASE_VERSION=default
 # LQ
 MAVEN=/data/apps/maven/bin/mvn
 GREP=grep
-#_RELEASE_REPO="https://std.loto-quebec.com/nexus/content/repositories/Releases/"
-#_STAGING_REPO="https://std.loto-quebec.com/nexus/content/repositories/PreReleases/"
-MVN_DEBUG_RELEASE=true
 
 # The most important line in each script
 set -e
@@ -76,34 +72,22 @@ mvn_post_stage(){
    # echo publication des artefacts dans Release
    echo "Publication des artefacts dans le repository final : Release"
    MVN_DEPLOY_RELEASE_ARGS="-DaltReleaseDeploymentRepository=nexus::default::${_RELEASE_REPO} -DdeployAtEnd=true"
-   ${MAVEN} $MVN_ARGS ${MVN_DEPLOY_RELEASE_ARGS_ARGS}  -B -f target/checkout deploy && \
-   echo "Publication du site" && \
-   ${MAVEN} $MVN_ARGS ${MVN_DEPLOY_RELEASE_ARGS}  -B -f target/checkout site-deploy  
-
-   # marquer la fin du post
-   #rm -f doPostRelease
+   ${MAVEN} $MVN_ARGS ${MVN_DEPLOY_RELEASE_ARGS} -B -f target/checkout deploy
+   #echo "Publication du site" && \
+   #${MAVEN} $MVN_ARGS ${MVN_DEPLOY_RELEASE_ARGS}  -B -f target/checkout site-deploy  
 }
 
 
 mvn_stage() {
-    # release webapp stage ${_GIT_LOCAL_PATH} ${_STAGING_REPO} ${_RELEASE_VERSION}
     
-    MVN_RELEASE_STAGING_REPO=$1
-    MVN_USER_VERSION=$2
+    MVN_USER_VERSION=$1
     MVN_RELEASE_PREPARE_ARGS="-DpushChanges=false -DtagNameFormat=@{project.version} "
     [ "${MVN_USER_VERSION}" != "" ] && MVN_RELEASE_PREPARE_ARGS="$MVN_RELEASE_PREPARE_ARGS -DreleaseVersion=${MVN_USER_VERSION}"
     MVN_RELEASE_PERFORM_ARGS="-DlocalCheckout=true -Dgoals=install "
-    MVN_DEPLOY_STAGING_ARGS="-DaltReleaseDeploymentRepository=nexus::default::${MVN_RELEASE_STAGING_REPO} -DdeployAtEnd=true"
+    MVN_DEPLOY_STAGING_ARGS="-DaltReleaseDeploymentRepository=nexus::default::${_STAGING_REPO} -DdeployAtEnd=true"
     ${MAVEN} $MVN_ARGS ${MVN_RELEASE_PREPARE_ARGS} -B release:prepare && \
     ${MAVEN} $MVN_ARGS ${MVN_RELEASE_PERFORM_ARGS} -B release:perform && \
     ${MAVEN} $MVN_ARGS ${MVN_DEPLOY_STAGING_ARGS}  -B -f target/checkout deploy  # -DdeployAtEnd=true
-    # && \
-    #${MAVEN} $MVN_ARGS ${MVN_RELEASE_PERFORM_ARGS} release:perform
-    #echo -n "Staging release with maven-release-plugin... "
-    #mvn_release_staging=$(${MAVEN} ${MVN_ARGS} ${MVN_RELEASE_PREPARE_ARGS} -B release:stage && \
-    #${MAVEN} ${MVN_ARGS} ${MVN_RELEASE_PERFORM_ARGS} release:perform)
-    #echo "Maven stage-release done"
-    #fi
 }
 
 
@@ -118,15 +102,9 @@ mvn_release() {
     # Creation d'un tag dans le repo local
     # Commit 2 # Change la version du pom vers le prochain snapshot  (ajoute snapshot version-prochaine-SNAPSHOT ) and supprime  le nom du tag dans scm connection details.
     # Phase release:perform : Build du code qui porte le tag et exectuion du goal -Dgoals=package ou (deploy par defaut = upload dans Nexus). Penser a mettre site-deploy
-    #if [ "${MVN_DEBUG_RELEASE}" = "true" ] ; then
-       ${MAVEN} $MVN_ARGS ${MVN_RELEASE_PREPARE_ARGS} -B release:prepare && \
-       ${MAVEN} $MVN_ARGS ${MVN_RELEASE_PERFORM_ARGS} release:perform
-    #else
-    #   echo -n "Using maven-release-plugin... "
-    #   mvn_release_prepare=$(${MAVEN} ${MVN_ARGS} ${MVN_RELEASE_PREPARE_ARGS} -B release:prepare && \ 
-    #   ${MAVEN} ${MVN_ARGS} ${MVN_RELEASE_PERFORM_ARGS} release:perform)
-    #   echo "'mvn release:perform'"
-    #fi
+    ${MAVEN} $MVN_ARGS ${MVN_RELEASE_PREPARE_ARGS} -B release:prepare && \
+    ${MAVEN} $MVN_ARGS ${MVN_RELEASE_PERFORM_ARGS} release:perform && \
+    ${MAVEN} $MVN_ARGS ${MVN_DEPLOY_ARGS}  -B -f target/checkout deploy
 }
 
 # Merging the content of release branch to develop
@@ -278,9 +256,6 @@ post_release(){
   else
    #cd ${_GIT_REPO_LOCATION} && push_changes && cd ${_PWD}
    mvn_post_stage && echo "Mise a jour des branches master et develop sur le serveur git" && push_changes
-
-   # marquer la fin du post
-   #rm -f doPostRelease
   fi
  else
   echo "Aucune trace de staging (pre-release). Verifier l'URL du depot ou Reexecuter la phase de staging " && exit 1 
@@ -311,7 +286,7 @@ release(){
  create_release_branch $STABLE_VERSION
  [ $? -ne 0 ] && echo "Echec du tracking des branches" && exit 1
  if [ "${_RTYPE}" = "stage" ]; then 
-   mvn_stage ${_STAGING_REPO} $STABLE_VERSION
+   mvn_stage  $STABLE_VERSION
  else
    mvn_release $STABLE_VERSION 
  fi
@@ -408,13 +383,12 @@ done
 
 [ "${_RELEASE_MODE}" = "ic" ] && _RELEASE_WS=${WORKSPACE-_RELEASE_WS}
 
-_RELEASE_REPO="${_REPO_SERVER}/nexus/content/repositories/Releases/"
-_STAGING_REPO="${_REPO_SERVER}/nexus/content/repositories/PreReleases/"
+_RELEASE_REPO="${_REPO_SERVER}/nexus/content/repositories/releases/"
+_STAGING_REPO="${_REPO_SERVER}/nexus/content/repositories/prereleases/"
 if ! isNexusAlive "${_RELEASE_REPO}/archetype-catalog.xml"; then
- echo "Le serveur Nexus est inaccessible : ${_RELEASE_REPO}/" && exit 1
+ echo "Le serveur Nexus est inaccessible : ${_RELEASE_REPO}" && exit 1
 fi
-echo "$_RELEASE_REPO $_STAGING_REPO"
-exit
+
 if [ "${_RELEASE_ARTIFACT}" = "" ] ;then 
  echo "L'option -t est obligatoire" && exit 1
 else
