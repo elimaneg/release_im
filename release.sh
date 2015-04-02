@@ -298,7 +298,7 @@ release(){
  [ $? -ne 0 ] && echo "Echec de la fusion des branches" && exit 1
  if [ "${_ATYPE}" = "jar" ]; then
   # jar
-  echo "RESTE : push_changes"
+  push_changes
  else
   # webapp
   echo "Prochaine etape : deployer l'application en TA (webapp) a partir du repository Nexus Pre-release"
