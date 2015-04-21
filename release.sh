@@ -23,8 +23,12 @@ GREP=grep
 XMLLINT=xmllint
 _REPO_SERVER="https://std.loto-quebec.com"
 WGET=wget
-_RELEASE_REPO="${_REPO_SERVER}/nexus/content/repositories/releases/"
-_STAGING_REPO="${_REPO_SERVER}/nexus/content/repositories/prereleases/"
+CURL=curl
+#_REPO_BASE="${_REPO_SERVER}/nexus/content/repositories"
+#_RELEASE_REPO="${_REPO_BASE}/releases/"
+#_STAGING_REPO="${_REPO_BASE}/prereleases/"
+#_CREATE_URI="${_REPO_SERVER}/nexus/service/local/repositories"
+_ZX="admin:admin123"
 _RELEASE_WS=/tmp/release-builds
 _RELEASE_MODE=std
 _RELEASE_VERSION=default
@@ -65,11 +69,46 @@ remove_release_branch() {
     remove_branch=$(${GIT} branch -D ${RELEASE_BRANCH} 2>&1)
 }
 
+ls_application_staging_repo(){
+
+    local _APP=$1
+    $CURL -so \
+    -H "Accept: application/xml" \
+    -H "Content-Type: application/xml" \
+    -f -X GET ${_SRV_URI}/$_APP
+    echo $? 
+}
+
+create_application_staging_repo(){
+
+    local _APP=$1
+    echo "<repository><data><id>$_APP</id><name>$_APP</name><exposed>true</exposed><repoType>hosted</repoType><repoPolicy>RELEASE</repoPolicy>\
+    <providerRole>org.sonatype.nexus.proxy.repository.Repository</providerRole><provider>maven2</provider><format>maven2</format>
+    <writePolicy>ALLOW_WRITE</writePolicy><browseable>true</browseable><indexable>true</indexable></data></repository>" \
+    > $(pwd)/repo.xml && \
+    $CURL -so \
+    -H "Accept: application/xml" \
+    -H "Content-Type: application/xml" \
+    -f -X POST -d "@$(pwd)/repo.xml" \
+    -u $_ZX ${_SRV_URI} && \
+    rm -f $(pwd)/repo.xml
+}
+
+rm_application_staging_repo(){
+
+    local _APP=$1
+    $CURL -so \
+    -H "Accept: application/json" \
+    -H "Content-Type: application/json" \
+    -f -X DELETE \
+    -u $_ZX ${_SRV_URI}/${_APP}
+}
+
+
 mvn_post_stage(){
 
    local _GIT_REPO_LOCATION=$1
   
-   # echo publication des artefacts dans Release
    echo "Publication des artefacts dans le repository final : Release"
    MVN_DEPLOY_RELEASE_ARGS="-DaltReleaseDeploymentRepository=nexus::default::${_RELEASE_REPO} -DdeployAtEnd=true"
    ${MAVEN} $MVN_ARGS ${MVN_DEPLOY_RELEASE_ARGS} -B -f target/checkout deploy
@@ -112,7 +151,7 @@ merging_to_develop() {
     echo -n "Merging back to ${DEV}... "
     RELEASE_BRANCH=$(get_release_branch $1)
     git_co_develop=$(${GIT} checkout ${DEV} 2>&1)
-    git_merge=$(${GIT} merge --no-ff -m "${SCM_COMMENT_PREFIX}merge ${RELEASE_BRANCH} into ${DEV}" ${RELEASE_BRANCH} 2>&1)
+    git_merge=$(${GIT} merge --no-ff -m "${SCM_COMMENT_PREFIX} merge ${RELEASE_BRANCH} into ${DEV}" ${RELEASE_BRANCH} 2>&1)
     echo "done"
 }
 
@@ -239,7 +278,7 @@ isDirWritable(){
 isNexusAlive(){
     local  _URL=$1
     local  _stat=1
-    wget_output=$(${WGET} -q "${_URL}")
+    wget_output=$(${CURL} -so /dev/null "${_URL}")
     [ $? -eq 0 ] && stat=0
     return $stat
 }
@@ -329,7 +368,7 @@ while getopts ":a:t:s:v:d:w:m:" opt; do
       ;;
     a)
       _RELEASE_TYPE=$OPTARG # stage|post
-      if [ "${_RELEASE_TYPE}" != "stage" -a "${_RELEASE_TYPE}" != "post" ] ; then
+      if [ "${_RELEASE_TYPE}" != "stage" -a "${_RELEASE_TYPE}" != "post" -a "${_RELEASE_TYPE}" != "test" ] ; then
       echo -n -e "Option -a (requise quand le projet est de type webapp) , valeurs possibles : stage|post \n - stage : deployer les artefacts dans PreReleases pour test en TA \
       \n - post : mettre a jour les branches master et develop et deplacer les artefacts de PreReleases vers Releases\n" && exit 1
       fi
@@ -383,10 +422,17 @@ done
 
 [ "${_RELEASE_MODE}" = "ic" ] && _RELEASE_WS=${WORKSPACE-_RELEASE_WS}
 
-_RELEASE_REPO="${_REPO_SERVER}/nexus/content/repositories/releases/"
-_STAGING_REPO="${_REPO_SERVER}/nexus/content/repositories/prereleases/"
+#_RELEASE_REPO="${_REPO_SERVER}/nexus/content/repositories/releases/"
+#_STAGING_REPO="${_REPO_SERVER}/nexus/content/repositories/prereleases/"
+
+_REPO_BASE="${_REPO_SERVER}/nexus/content/repositories"
+_RELEASE_REPO="${_REPO_BASE}/releases/"
+_STAGING_REPO="${_REPO_BASE}/prereleases/"
+_SRV_URI="${_REPO_SERVER}/nexus/service/local/repositories"
+
 if ! isNexusAlive "${_RELEASE_REPO}/archetype-catalog.xml"; then
  echo "Le serveur Nexus est inaccessible : ${_RELEASE_REPO}" && exit 1
+
 fi
 
 if [ "${_RELEASE_ARTIFACT}" = "" ] ;then 
@@ -406,6 +452,8 @@ else
            echo "L'option -a devient obligatoire quand l'option -t est presente" && $0 -t webapp -a xxx && exit 1
          else
 	   case ${_RELEASE_TYPE} in
+	     test)
+		   create_application_staging_repo abcdwiii;;
 	     post) cd ${_GIT_LOCAL_PATH} && \
                    post_release ${_GIT_LOCAL_PATH} && \
                    cd -  >/dev/null 2>&1 && \
