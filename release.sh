@@ -29,13 +29,14 @@ CURL=curl
 #_STAGING_REPO="${_REPO_BASE}/prereleases/"
 #_CREATE_URI="${_REPO_SERVER}/nexus/service/local/repositories"
 _ZX="admin:admin123"
-_RELEASE_WS=/tmp/release-builds
+#_RELEASE_WS=/tmp/release-builds
+_RELEASE_WS=${WORKSPACE-$HOME}
+_RELEASE_WS=${_RELEASE_WS}/releases
 _RELEASE_MODE=std
 _RELEASE_VERSION=default
 
 # LQ
 MAVEN=/data/apps/maven/bin/mvn
-GREP=grep
 
 # The most important line in each script
 set -e
@@ -60,6 +61,7 @@ create_release_branch() {
     RELEASE_BRANCH=$(get_release_branch $1)
     echo "$RELEASE_BRANCH"
     create_branch=$(${GIT} checkout -b ${RELEASE_BRANCH} ${DEV} 2>&1)
+    #${GIT} checkout -b ${RELEASE_BRANCH} ${DEV}
 }
 
 remove_release_branch() {
@@ -106,7 +108,7 @@ rm_application_staging_repo(){
 
 
 mvn_post_stage(){
-
+MVN_DEPLOY_ARGS
    local _GIT_REPO_LOCATION=$1
   
    echo "Publication des artefacts dans le repository final : Release"
@@ -122,11 +124,11 @@ mvn_stage() {
     MVN_USER_VERSION=$1
     MVN_RELEASE_PREPARE_ARGS="-DpushChanges=false -DtagNameFormat=@{project.version} "
     [ "${MVN_USER_VERSION}" != "" ] && MVN_RELEASE_PREPARE_ARGS="$MVN_RELEASE_PREPARE_ARGS -DreleaseVersion=${MVN_USER_VERSION}"
-    MVN_RELEASE_PERFORM_ARGS="-DlocalCheckout=true -Dgoals=install "
+    MVN_RELEASE_PERFORM_ARGS="-DlocalCheckout=true -Dgoals=deploy -DuseReleaseProfile=false "
     MVN_DEPLOY_STAGING_ARGS="-DaltReleaseDeploymentRepository=nexus::default::${_STAGING_REPO} -DdeployAtEnd=true"
     ${MAVEN} $MVN_ARGS ${MVN_RELEASE_PREPARE_ARGS} -B release:prepare && \
     ${MAVEN} $MVN_ARGS ${MVN_RELEASE_PERFORM_ARGS} -B release:perform && \
-    ${MAVEN} $MVN_ARGS ${MVN_DEPLOY_STAGING_ARGS}  -B -f target/checkout deploy  # -DdeployAtEnd=true
+    ${MAVEN} $MVN_ARGS ${MVN_DEPLOY_STAGING_ARGS}  -B -f target/checkout deploy 
 }
 
 
@@ -135,7 +137,8 @@ mvn_release() {
     MVN_USER_VERSION=$1
     MVN_RELEASE_PREPARE_ARGS="-DpushChanges=false -DtagNameFormat=@{project.version} "
     [ "${MVN_USER_VERSION}" != "" ] && MVN_RELEASE_PREPARE_ARGS="$MVN_RELEASE_PREPARE_ARGS -DreleaseVersion=${MVN_USER_VERSION}"
-    MVN_RELEASE_PERFORM_ARGS="-DlocalCheckout=true -Dgoals=install" # deploy with jenkins upload artifact
+    MVN_RELEASE_PERFORM_ARGS="-DlocalCheckout=true -Dgoals=deploy -DuseReleaseProfile=false " # deploy with jenkins upload artifact
+    MVN_DEPLOY_ARGS="-DaltReleaseDeploymentRepository=nexus::default::${_RELEASE_REPO} -DdeployAtEnd=true"
     # Phase release:prepare cree 2 commits dans le repo local : 
     # Commit 1 # Change la version du pom (enleve -SNAPSHOT) et ajoute le nom du tag dans la section scm connection du pom.xml
     # Creation d'un tag dans le repo local
@@ -174,6 +177,8 @@ track_remote_branch(){
 
   local _BRANCH=$1
   if ! ${GIT} branch|${GREP} -wq ${_BRANCH}; then
+    _exists=$(git rev-parse --verify remotes/origin/${_BRANCH} 2>&1)
+    [ $? -ne 0 ] && echo "Branch ${_BRANCH} does not exists on remote repository" && exit 1
     echo -n "Creating a local branch ${_BRANCH} to track origin/${_BRANCH}... "
     track_branch=$(${GIT} branch --track ${_BRANCH} origin/${_BRANCH} 2>&1)
     echo "done"
@@ -278,9 +283,9 @@ isDirWritable(){
 isNexusAlive(){
     local  _URL=$1
     local  _stat=1
-    wget_output=$(${CURL} -so /dev/null "${_URL}")
-    [ $? -eq 0 ] && stat=0
-    return $stat
+    wget_output=$(${CURL} -so /dev/null "${_URL}")    
+    [ $? -eq 0 ] && _stat=0
+    return $_stat
 }
 
 post_release(){
@@ -358,8 +363,20 @@ function update_repo(){
  cd "${_GIT_LOCAL}" &&  ${GIT} pull 
 }
 
+function usage(){
 
-while getopts ":a:t:s:v:d:w:m:" opt; do
+ echo "Options : :a:t:s:v:d:w:m:"
+ echo "-a : action a executer : stage ou post"
+ echo "-t : type d'artefact : war ou jar"
+ echo "-v : version qui suarcharge celle par defaut"
+ echo "-d : url du depot git"
+ echo "-s : url du server nexus"
+ echo "-w : espace de travail"
+ echo "-b : branche a release" 
+ exit 1
+}
+
+while getopts ":a:t:s:v:b:d:w:m:" opt; do
   case $opt in
     t)
       _RELEASE_ARTIFACT=$OPTARG # 1: jar|webapp
@@ -389,13 +406,22 @@ while getopts ":a:t:s:v:d:w:m:" opt; do
         fi
       fi
       ;;
-    m)
-      _RELEASE_MODE=$OPTARG # ic ou standalone
-      if [ "${_RELEASE_MODE}" != "ic" -a "${_RELEASE_MODE}" != "std" ] ; then
-      echo -n -e "Option -m , valeurs possibles : ic|std \n - ic : integrattion dans un environnement d'IC \
-      \n - std : fonctionnement en mode standalone\n" && exit 1
+    b)
+      _RELEASE_FROM_BRANCH=$OPTARG # 
+      if [ "${_RELEASE_FROM_BRANCH}" != ""  ] ; then
+         DEV="${_RELEASE_FROM_BRANCH}"
+      #echo -n -e "Option -m , valeurs possibles : ic|std \n - ic : integrattion dans un environnement d'IC \
+      #\n - std : fonctionnement en mode standalone\n" && exit 1
       fi
       ;;
+
+#    m)
+#      _RELEASE_MODE=$OPTARG # ic ou standalone
+#      if [ "${_RELEASE_MODE}" != "ic" -a "${_RELEASE_MODE}" != "std" ] ; then
+#      echo -n -e "Option -m , valeurs possibles : ic|std \n - ic : integrattion dans un environnement d'IC \
+#      \n - std : fonctionnement en mode standalone\n" && exit 1
+#      fi
+#      ;;
     w)
       _RELEASE_WS=$OPTARG # workspace
       if [ "${_RELEASE_WS}" != "" ];then
@@ -409,7 +435,7 @@ while getopts ":a:t:s:v:d:w:m:" opt; do
       ;;
     \?)
       echo "Option invalide: -$OPTARG" >&2
-      exit 1
+      usage
       ;;
     :)
       echo "L'option -$OPTARG requiert un argument." >&2
@@ -420,7 +446,7 @@ done
 
 [ "${_RELEASE_GIT_REPOS}" = "" ] && echo "L'option -d (URL du depot git de la forme git@serveur_git:GROUP/PROJET.git) est obligatoire" && exit 1
 
-[ "${_RELEASE_MODE}" = "ic" ] && _RELEASE_WS=${WORKSPACE-_RELEASE_WS}
+#[ "${_RELEASE_MODE}" = "ic" ] && _RELEASE_WS=${WORKSPACE-_RELEASE_WS}
 
 #_RELEASE_REPO="${_REPO_SERVER}/nexus/content/repositories/releases/"
 #_STAGING_REPO="${_REPO_SERVER}/nexus/content/repositories/prereleases/"
