@@ -124,7 +124,7 @@ mvn_stage() {
     MVN_USER_VERSION=$1
     MVN_RELEASE_PREPARE_ARGS="-DpushChanges=false -DtagNameFormat=@{project.version} "
     [ "${MVN_USER_VERSION}" != "" ] && MVN_RELEASE_PREPARE_ARGS="$MVN_RELEASE_PREPARE_ARGS -DreleaseVersion=${MVN_USER_VERSION}"
-    MVN_RELEASE_PERFORM_ARGS="-DlocalCheckout=true -Dgoals=deploy -DuseReleaseProfile=false "
+    MVN_RELEASE_PERFORM_ARGS="-DlocalCheckout=true -Dgoals=install -DuseReleaseProfile=false "
     MVN_DEPLOY_STAGING_ARGS="-DaltReleaseDeploymentRepository=nexus::default::${_STAGING_REPO} -DdeployAtEnd=true"
     ${MAVEN} $MVN_ARGS ${MVN_RELEASE_PREPARE_ARGS} -B release:prepare && \
     ${MAVEN} $MVN_ARGS ${MVN_RELEASE_PERFORM_ARGS} -B release:perform && \
@@ -137,7 +137,7 @@ mvn_release() {
     MVN_USER_VERSION=$1
     MVN_RELEASE_PREPARE_ARGS="-DpushChanges=false -DtagNameFormat=@{project.version} "
     [ "${MVN_USER_VERSION}" != "" ] && MVN_RELEASE_PREPARE_ARGS="$MVN_RELEASE_PREPARE_ARGS -DreleaseVersion=${MVN_USER_VERSION}"
-    MVN_RELEASE_PERFORM_ARGS="-DlocalCheckout=true -Dgoals=deploy -DuseReleaseProfile=false " # deploy with jenkins upload artifact
+    MVN_RELEASE_PERFORM_ARGS="-DlocalCheckout=true -Dgoals=install -DuseReleaseProfile=false " # deploy with jenkins upload artifact
     MVN_DEPLOY_ARGS="-DaltReleaseDeploymentRepository=nexus::default::${_RELEASE_REPO} -DdeployAtEnd=true"
     # Phase release:prepare cree 2 commits dans le repo local : 
     # Commit 1 # Change la version du pom (enleve -SNAPSHOT) et ajoute le nom du tag dans la section scm connection du pom.xml
