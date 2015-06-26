@@ -122,10 +122,10 @@ MVN_DEPLOY_ARGS
 mvn_stage() {
     
     MVN_USER_VERSION=$1
-    MVN_RELEASE_PREPARE_ARGS="-DpushChanges=false -DtagNameFormat=@{project.version} "
+    MVN_RELEASE_PREPARE_ARGS="${_RELEASE_MAVEN_OPTS} -DpushChanges=false -DtagNameFormat=@{project.version} "
     [ "${MVN_USER_VERSION}" != "" ] && MVN_RELEASE_PREPARE_ARGS="$MVN_RELEASE_PREPARE_ARGS -DreleaseVersion=${MVN_USER_VERSION}"
-    MVN_RELEASE_PERFORM_ARGS="-DlocalCheckout=true -Dgoals=install -DuseReleaseProfile=false "
-    MVN_DEPLOY_STAGING_ARGS="-DaltReleaseDeploymentRepository=nexus::default::${_STAGING_REPO} -DdeployAtEnd=true"
+    MVN_RELEASE_PERFORM_ARGS="${_RELEASE_MAVEN_OPTS} -DlocalCheckout=true -Dgoals=install -DuseReleaseProfile=false "
+    MVN_DEPLOY_STAGING_ARGS="${_RELEASE_MAVEN_OPTS} -DaltReleaseDeploymentRepository=nexus::default::${_STAGING_REPO} -DdeployAtEnd=true"
     ${MAVEN} $MVN_ARGS ${MVN_RELEASE_PREPARE_ARGS} -B release:prepare && \
     ${MAVEN} $MVN_ARGS ${MVN_RELEASE_PERFORM_ARGS} -B release:perform && \
     ${MAVEN} $MVN_ARGS ${MVN_DEPLOY_STAGING_ARGS}  -B -f target/checkout deploy 
@@ -135,10 +135,13 @@ mvn_stage() {
 mvn_release() {
 
     MVN_USER_VERSION=$1
-    MVN_RELEASE_PREPARE_ARGS="-DpushChanges=false -DtagNameFormat=@{project.version} "
+    MVN_RELEASE_PREPARE_ARGS="${_RELEASE_MAVEN_OPTS} -DpushChanges=false -DtagNameFormat=@{project.version} "
     [ "${MVN_USER_VERSION}" != "" ] && MVN_RELEASE_PREPARE_ARGS="$MVN_RELEASE_PREPARE_ARGS -DreleaseVersion=${MVN_USER_VERSION}"
-    MVN_RELEASE_PERFORM_ARGS="-DlocalCheckout=true -Dgoals=install -DuseReleaseProfile=false " # deploy with jenkins upload artifact
-    MVN_DEPLOY_ARGS="-DaltReleaseDeploymentRepository=nexus::default::${_RELEASE_REPO} -DdeployAtEnd=true"
+    MVN_RELEASE_PERFORM_ARGS="${_RELEASE_MAVEN_OPTS} -DlocalCheckout=true -Dgoals=install -DuseReleaseProfile=false " # deploy with jenkins upload artifact
+    MVN_DEPLOY_ARGS="${_RELEASE_MAVEN_OPTS} -DaltReleaseDeploymentRepository=nexus::default::${_RELEASE_REPO} -DdeployAtEnd=true"
+echo XXXXXXXXXXXXXXXX : ${MAVEN} $MVN_ARGS ${MVN_RELEASE_PREPARE_ARGS}
+echo XXXXXXXXXXXXXXXX : ${_RELEASE_MAVEN_OPTS}
+exit 
     # Phase release:prepare cree 2 commits dans le repo local : 
     # Commit 1 # Change la version du pom (enleve -SNAPSHOT) et ajoute le nom du tag dans la section scm connection du pom.xml
     # Creation d'un tag dans le repo local
@@ -368,20 +371,22 @@ function usage(){
  echo "Options : :a:t:s:v:d:w:m:"
  echo "-a : action a executer : stage ou post"
  echo "-t : type d'artefact : war ou jar"
- echo "-v : version qui suarcharge celle par defaut"
+ echo "-v : version qui surcharge celle par defaut"
  echo "-d : url du depot git"
  echo "-s : url du server nexus"
  echo "-w : espace de travail"
- echo "-b : branche a release" 
+ echo "-b : branche a realiser" 
+ echo "-o : options Maven"
  exit 1
 }
 
-while getopts ":a:t:s:v:b:d:w:m:" opt; do
+while getopts ":a:t:s:v:b:d:w:m:o:" opt; do
   case $opt in
     t)
       _RELEASE_ARTIFACT=$OPTARG # 1: jar|webapp
       [ "${_RELEASE_ARTIFACT}" != "jar" -a "${_RELEASE_ARTIFACT}" != "webapp" ] && \
       echo "Option -t (type d'artefact), Valeurs possibles : jar|webapp " && exit 1
+      #shift $((OPTIND-1))
       ;;
     a)
       _RELEASE_TYPE=$OPTARG # stage|post
@@ -410,11 +415,12 @@ while getopts ":a:t:s:v:b:d:w:m:" opt; do
       _RELEASE_FROM_BRANCH=$OPTARG # 
       if [ "${_RELEASE_FROM_BRANCH}" != ""  ] ; then
          DEV="${_RELEASE_FROM_BRANCH}"
-      #echo -n -e "Option -m , valeurs possibles : ic|std \n - ic : integrattion dans un environnement d'IC \
-      #\n - std : fonctionnement en mode standalone\n" && exit 1
       fi
       ;;
-
+    o)
+      _RELEASE_MAVEN_OPTS=${OPTARG} # options maven
+      ;;
+ 
 #    m)
 #      _RELEASE_MODE=$OPTARG # ic ou standalone
 #      if [ "${_RELEASE_MODE}" != "ic" -a "${_RELEASE_MODE}" != "std" ] ; then
@@ -446,7 +452,7 @@ done
 
 [ "${_RELEASE_GIT_REPOS}" = "" ] && echo "L'option -d (URL du depot git de la forme git@serveur_git:GROUP/PROJET.git) est obligatoire" && exit 1
 
-#[ "${_RELEASE_MODE}" = "ic" ] && _RELEASE_WS=${WORKSPACE-_RELEASE_WS}
+####[ "${_RELEASE_MODE}" = "ic" ] && _RELEASE_WS=${WORKSPACE-_RELEASE_WS}
 
 #_RELEASE_REPO="${_REPO_SERVER}/nexus/content/repositories/releases/"
 #_STAGING_REPO="${_REPO_SERVER}/nexus/content/repositories/prereleases/"
@@ -455,10 +461,8 @@ _REPO_BASE="${_REPO_SERVER}/nexus/content/repositories"
 _RELEASE_REPO="${_REPO_BASE}/releases/"
 _STAGING_REPO="${_REPO_BASE}/prereleases/"
 _SRV_URI="${_REPO_SERVER}/nexus/service/local/repositories"
-
 if ! isNexusAlive "${_RELEASE_REPO}/archetype-catalog.xml"; then
  echo "Le serveur Nexus est inaccessible : ${_RELEASE_REPO}" && exit 1
-
 fi
 
 if [ "${_RELEASE_ARTIFACT}" = "" ] ;then 
@@ -467,6 +471,7 @@ else
  _GIT_GROUPNAME=$(echo ${_RELEASE_GIT_REPOS}|awk -F'/|:' '{print $(NF-1)}')
  _GIT_REPONAME=$(echo ${_RELEASE_GIT_REPOS}|awk -F'/' '{print $NF}'|sed 's/.git//')
  _GIT_LOCAL_PATH=${_RELEASE_WS}/${_GIT_GROUPNAME}/${_GIT_REPONAME}
+ _RELEASE_MAVEN_OPTS=$@
  case ${_RELEASE_ARTIFACT} in
     # release jar (one shot = les autres options sont inutiles)
     jar) clone_repo ${_RELEASE_GIT_REPOS} ${_GIT_LOCAL_PATH} && \
