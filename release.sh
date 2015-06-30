@@ -34,7 +34,8 @@ _RELEASE_WS=${WORKSPACE-$HOME}
 _RELEASE_WS=${_RELEASE_WS}/releases
 _RELEASE_MODE=std
 _RELEASE_VERSION=default
-
+_RELEASE_MAVEN_DOCS=false
+_RELEASE_MAVEN_SITE=false
 # LQ
 MAVEN=/data/apps/maven/bin/mvn
 
@@ -118,17 +119,26 @@ MVN_DEPLOY_ARGS
    #${MAVEN} $MVN_ARGS ${MVN_DEPLOY_RELEASE_ARGS}  -B -f target/checkout site-deploy  
 }
 
+mvn_site() {
+
+    #MVN_RELEASE_SITE_ARGS="${_RELEASE_MAVEN_OPTS} "
+    #track_remote_branch ${MASTER}
+    #${GIT} checkout ${MASTER} 2>&1 && \
+    ${MAVEN} ${MVN_ARGS} ${MVN_RELEASE_SITE_ARGS} -B -f target/checkout javadoc:aggregate site:site  && \
+    ${MAVEN} ${MVN_ARGS} ${MVN_RELEASE_SITE_ARGS} -B -f target/checkout site:deploy 
+}
 
 mvn_stage() {
     
     MVN_USER_VERSION=$1
     MVN_RELEASE_PREPARE_ARGS="${_RELEASE_MAVEN_OPTS} -DpushChanges=false -DtagNameFormat=@{project.version} "
     [ "${MVN_USER_VERSION}" != "" ] && MVN_RELEASE_PREPARE_ARGS="$MVN_RELEASE_PREPARE_ARGS -DreleaseVersion=${MVN_USER_VERSION}"
-    MVN_RELEASE_PERFORM_ARGS="${_RELEASE_MAVEN_OPTS} -DlocalCheckout=true -Dgoals=install -DuseReleaseProfile=false "
+    MVN_RELEASE_PERFORM_ARGS="${_RELEASE_MAVEN_OPTS} -DlocalCheckout=true -Dgoals=install -DuseReleaseProfile=${_RELEASE_MAVEN_DOCS} "
     MVN_DEPLOY_STAGING_ARGS="${_RELEASE_MAVEN_OPTS} -DaltReleaseDeploymentRepository=nexus::default::${_STAGING_REPO} -DdeployAtEnd=true"
     ${MAVEN} $MVN_ARGS ${MVN_RELEASE_PREPARE_ARGS} -B release:prepare && \
     ${MAVEN} $MVN_ARGS ${MVN_RELEASE_PERFORM_ARGS} -B release:perform && \
     ${MAVEN} $MVN_ARGS ${MVN_DEPLOY_STAGING_ARGS}  -B -f target/checkout deploy 
+    #[ "${_RELEASE_MAVEN_SITE}" = "true" ] && mvn_site
 }
 
 
@@ -137,11 +147,8 @@ mvn_release() {
     MVN_USER_VERSION=$1
     MVN_RELEASE_PREPARE_ARGS="${_RELEASE_MAVEN_OPTS} -DpushChanges=false -DtagNameFormat=@{project.version} "
     [ "${MVN_USER_VERSION}" != "" ] && MVN_RELEASE_PREPARE_ARGS="$MVN_RELEASE_PREPARE_ARGS -DreleaseVersion=${MVN_USER_VERSION}"
-    MVN_RELEASE_PERFORM_ARGS="${_RELEASE_MAVEN_OPTS} -DlocalCheckout=true -Dgoals=install -DuseReleaseProfile=false " # deploy with jenkins upload artifact
+    MVN_RELEASE_PERFORM_ARGS="${_RELEASE_MAVEN_OPTS} -DlocalCheckout=true -Dgoals=install -DuseReleaseProfile=${_RELEASE_MAVEN_DOCS} " # deploy with jenkins upload artifact
     MVN_DEPLOY_ARGS="${_RELEASE_MAVEN_OPTS} -DaltReleaseDeploymentRepository=nexus::default::${_RELEASE_REPO} -DdeployAtEnd=true"
-echo XXXXXXXXXXXXXXXX : ${MAVEN} $MVN_ARGS ${MVN_RELEASE_PREPARE_ARGS}
-echo XXXXXXXXXXXXXXXX : ${_RELEASE_MAVEN_OPTS}
-exit 
     # Phase release:prepare cree 2 commits dans le repo local : 
     # Commit 1 # Change la version du pom (enleve -SNAPSHOT) et ajoute le nom du tag dans la section scm connection du pom.xml
     # Creation d'un tag dans le repo local
@@ -150,6 +157,9 @@ exit
     ${MAVEN} $MVN_ARGS ${MVN_RELEASE_PREPARE_ARGS} -B release:prepare && \
     ${MAVEN} $MVN_ARGS ${MVN_RELEASE_PERFORM_ARGS} release:perform && \
     ${MAVEN} $MVN_ARGS ${MVN_DEPLOY_ARGS}  -B -f target/checkout deploy
+    if [ "${_RELEASE_MAVEN_SITE}" = "true" ] ;then  
+     mvn_site
+    fi
 }
 
 # Merging the content of release branch to develop
@@ -380,12 +390,12 @@ function usage(){
  exit 1
 }
 
-while getopts ":a:t:s:v:b:d:w:m:o:" opt; do
+while getopts ":a:t:s:v:b:d:w:m:o:z:" opt; do
   case $opt in
     t)
       _RELEASE_ARTIFACT=$OPTARG # 1: jar|webapp
-      [ "${_RELEASE_ARTIFACT}" != "jar" -a "${_RELEASE_ARTIFACT}" != "webapp" ] && \
-      echo "Option -t (type d'artefact), Valeurs possibles : jar|webapp " && exit 1
+      [ "${_RELEASE_ARTIFACT}" != "jar" -a "${_RELEASE_ARTIFACT}" != "webapp" -a "${_RELEASE_ARTIFACT}" != "doc" ] && \
+      echo "Option -t (type d'artefact), Valeurs possibles : jar|webapp|doc " && exit 1
       #shift $((OPTIND-1))
       ;;
     a)
@@ -420,7 +430,10 @@ while getopts ":a:t:s:v:b:d:w:m:o:" opt; do
     o)
       _RELEASE_MAVEN_OPTS=${OPTARG} # options maven
       ;;
- 
+    z)
+      _RELEASE_MAVEN_SITE=${OPTARG} # options maven
+      ;;
+
 #    m)
 #      _RELEASE_MODE=$OPTARG # ic ou standalone
 #      if [ "${_RELEASE_MODE}" != "ic" -a "${_RELEASE_MODE}" != "std" ] ; then
@@ -471,9 +484,14 @@ else
  _GIT_GROUPNAME=$(echo ${_RELEASE_GIT_REPOS}|awk -F'/|:' '{print $(NF-1)}')
  _GIT_REPONAME=$(echo ${_RELEASE_GIT_REPOS}|awk -F'/' '{print $NF}'|sed 's/.git//')
  _GIT_LOCAL_PATH=${_RELEASE_WS}/${_GIT_GROUPNAME}/${_GIT_REPONAME}
- _RELEASE_MAVEN_OPTS=$@
+ #_RELEASE_MAVEN_SITE=
  case ${_RELEASE_ARTIFACT} in
     # release jar (one shot = les autres options sont inutiles)
+    doc) clone_repo ${_RELEASE_GIT_REPOS} ${_GIT_LOCAL_PATH} && \
+         cd ${_GIT_LOCAL_PATH} && \
+         mvn_site ${_RELEASE_VERSION} && cd -  >/dev/null 2>&1 && \
+         echo "Suppression du repertoire de travail... " && rm -rf  ${_GIT_LOCAL_PATH}
+         ;;
     jar) clone_repo ${_RELEASE_GIT_REPOS} ${_GIT_LOCAL_PATH} && \
          cd ${_GIT_LOCAL_PATH} && \
          release jar release ${_RELEASE_VERSION} && cd -  >/dev/null 2>&1
