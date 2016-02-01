@@ -483,7 +483,7 @@ if [ "${_RELEASE_ARTIFACT}" = "" ] ;then
 else
  _GIT_GROUPNAME=$(echo ${_RELEASE_GIT_REPOS}|awk -F'/|:' '{print $(NF-1)}')
  _GIT_REPONAME=$(echo ${_RELEASE_GIT_REPOS}|awk -F'/' '{print $NF}'|sed 's/.git//')
- _GIT_LOCAL_PATH=${_RELEASE_WS}/${_GIT_GROUPNAME}/${_GIT_REPONAME}
+ _GIT_LOCAL_PATH=${_RELEASE_WS}/${_GIT_GROUPNAME}/${_GIT_REPONAME}/${DEV}
  #_RELEASE_MAVEN_SITE=
  case ${_RELEASE_ARTIFACT} in
     # release jar (one shot = les autres options sont inutiles)
